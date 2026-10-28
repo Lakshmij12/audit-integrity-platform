@@ -17,6 +17,7 @@ from fastapi import FastAPI, Request, Response
 from aip.api.auth import parse_api_keys
 from aip.api.errors import install_error_handlers
 from aip.api.routes_events import router as events_router
+from aip.api.routes_export import router as export_router
 from aip.api.routes_lifecycle import router as lifecycle_router
 from aip.api.routes_verify import router as verify_router
 from aip.config import Settings
@@ -117,4 +118,5 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
     app.include_router(events_router)
     app.include_router(verify_router)
     app.include_router(lifecycle_router)
+    app.include_router(export_router)
     return app

@@ -218,3 +218,21 @@ here is claimed to be complete.
 66. **The schema migration only goes forward.** Opening a v1 file with this code migrates it to v2
     automatically. Earlier code refuses a v2 file (it fails closed on the version), and there is no
     downgrade.
+
+## Export and standalone verification (implemented in commit 10)
+67. **Completeness is asserted by the signer, not proven** (E5). The verifier detects records that were
+    altered, removed, reordered or substituted relative to the signed manifest. It cannot detect a
+    matching record that the signer left out.
+68. **The trusted key is distributed out of band.** The verifier needs the public key passed in (hex).
+    There is no PKI, rotation or revocation (item 58), and someone holding the server's signing key can
+    sign any bundle.
+69. **Archived payloads are not exported.** Archived records in a bundle can only be `INDETERMINATE`:
+    their hashes, chain position and signed run are verified, but their content is not.
+70. **The skeleton reveals chain metadata**: record count, `recordedAt` and hashes for the whole chain,
+    not just the matching records (no payloads). Bundles can be large: at most 10,000 records, but the
+    skeleton spans the entire chain.
+71. **The export runs in a separate snapshot from the preceding chain verification.** Records appended
+    between the two are exported without having been checked by the server; the recipient's verifier
+    still checks them.
+72. **The bundle includes plaintext payload values** of the exported records, other than redacted
+    leaves, for any auditor key. Treat bundles as sensitive.

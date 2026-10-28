@@ -192,6 +192,19 @@ signing key is missing it reports `INDETERMINATE`, and if an archive file has be
 `unverified.archivedContentUnavailable`. A database created by commits 6–8 (schema v1) is migrated to v2
 the first time it is opened.
 
+## Export and offline verification (commit 10)
+```powershell
+$h = @{ "X-API-Key" = "<auditor key>" }
+Invoke-WebRequest -Uri "http://127.0.0.1:8000/audit/export?actorId=user-0042" -Headers $h -OutFile bundle.json
+# The public key printed by `new-signing-key` (or obtained from the operator), never the one in the bundle:
+python tools/verify_bundle.py bundle.json --trusted-key <64 hex characters>
+python tools/verify_bundle.py bundle.json --trusted-key-file trusted.hex --anchor-seq 42 --anchor-hash <recordHash>
+```
+The verifier needs only Python 3.14 and `cryptography`; it does not import `aip`. The tests run it in
+isolated mode (`python -I`) from a temporary directory without `src` on the path. Exit codes: 0
+VERIFIED, 3 INDETERMINATE (archived payloads not included), 1 FAILED, 2 usage error. `tools/` is
+included in strict mypy (`pyproject.toml`).
+
 ## Quality gates
 ```powershell
 .\.venv\Scripts\python.exe -m ruff check .
@@ -276,6 +289,16 @@ Commit 9 (redaction, retention, schema v2; no dependency changes, so pip-audit w
 | `ruff format --check .` | 0 | `73 files already formatted` |
 | `mypy` (strict, `warn_unreachable`) | 0 | `Success: no issues found in 65 source files` |
 | `pytest -W error --cov=aip --cov-branch` | 0 | `612 passed` (533 existing, 5 of them updated for the new rules, + 79 lifecycle, migration and API); 96% overall; `lifecycle/service.py` 99%, `lifecycle/archive.py` 96%, `routes_lifecycle.py` 100%, `verify/service.py` 93%, `storage/schema.py` 97% |
+| `scripts/tamper_demo.py` | 0 | `RESULT: all steps behaved as expected` |
+
+Commit 10 (export and standalone verifier; no dependency changes, so pip-audit was not re-run):
+
+| Gate | Exit code | Output |
+|------|-----------|--------|
+| `ruff check .` | 0 | `All checks passed!` |
+| `ruff format --check .` | 0 | `79 files already formatted` |
+| `mypy` (strict, `warn_unreachable`, now including `tools/`) | 0 | `Success: no issues found in 71 source files` |
+| `pytest -W error --cov=aip --cov-branch` | 0 | `638 passed` (612 existing + 26 export/verifier, most of them running `tools/verify_bundle.py` as a subprocess); 96% overall; `routes_export.py` 95%, `export/bundle.py` 85% (uncovered: the 10,000-record limit and skipping malformed system events). `tools/` is outside `src/aip`, so coverage does not measure it; the subprocess tests exercise it |
 | `scripts/tamper_demo.py` | 0 | `RESULT: all steps behaved as expected` |
 
 `poc/` is excluded from Ruff: it holds the redaction spike exactly as run and recorded in commit 3.

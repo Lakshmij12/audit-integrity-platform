@@ -352,6 +352,62 @@ file digests, `"completeness": "signer-asserted"`) with an Ed25519 signature.
 | E4 | Skeleton head equals the included signed checkpoint | Anchoring to an authenticated head |
 | E5 | — | **Completeness is not provable**: the skeleton holds only hashes, so a recipient cannot tell whether an omitted record matched the filter |
 
+### 8.1 As implemented in commit 10
+`GET /audit/export?actorId=…` or `?resourceId=…`: exactly one filter (422 otherwise). It requires an
+`auditor` or `admin` key. The chain is verified first (409 if it fails), and a signing key is required
+(503 otherwise). At most 10,000 records per bundle (422 above that). The response is a single
+canonical-JSON document, so the same database and clock always give the same bytes:
+
+```
+{"format":"aip.export-bundle","v":1,
+ "manifest":{"t":"aip.export","v":1,"hashVersion":1,"filter":{"actorId":…},"exportedAt",
+             "head":{"seq","recordHash"},"recordCount","recordSeqs":[…],
+             "recordsSha256","authorizationsSha256","skeletonSha256",
+             "completeness":"signer-asserted","keyId"},
+ "signature": Ed25519(canon(manifest)), "signerPublicKey": hex (informational only),
+ "records":[{seq,eventId,eventType,actorId,resourceType,resourceId,timestamp,recordedAt,
+             payloadRoot,contentHash,prevHash,recordHash,archivedAt,archiveRunId,
+             leaves:[{path,commitment,salt,value}] | null}],
+ "authorizations":[records of the SYSTEM_REDACTION / SYSTEM_RETENTION_RUN events that cover them],
+ "skeleton":[{seq,recordedAt,prevHash,contentHash,recordHash} for seq 1..head]}
+```
+Redacted leaves have `salt` and `value` set to null; the plaintext no longer exists anywhere to export.
+Archived records have `leaves: null`, because archive files are not exported. The bundle never holds
+private key material.
+
+`tools/verify_bundle.py` is a separate implementation of §1, §2, §6.1 and §7.2. It imports nothing
+from `aip`, depends only on `cryptography`, and needs no database or API. It takes the trusted key on
+the command line (`--trusted-key` or `--trusted-key-file`); `signerPublicKey` is never trusted. Checks,
+in order:
+
+1. **Format and signature.** The format is valid, `manifest.keyId` equals the trusted key's id, and the
+   Ed25519 signature over the manifest verifies (`UNTRUSTED_KEY`, `SIGNATURE_INVALID`).
+2. **Integrity (E1).** The three section digests match the manifest (`MANIFEST_DIGEST_MISMATCH`).
+3. **Skeleton.** It runs from genesis to the signed head: contiguous seqs, links, and recomputed
+   recordHash (`CHAIN_SEQUENCE_GAP`, `CHAIN_LINK_BROKEN`, `RECORD_HASH_MISMATCH`, `HEAD_MISMATCH`).
+4. **Record set.** The records are exactly the signed `recordSeqs`, strictly increasing, with the
+   signed count (`RECORD_SET_MISMATCH`).
+5. **Each record (E2, E3):**
+   - its chain fields equal its skeleton entry (`RECORD_NOT_IN_CHAIN`)
+   - eventId, contentHash, leaf commitments and payload root (`EVENT_ID_MISMATCH`,
+     `CONTENT_HASH_MISMATCH`, `LEAF_COMMITMENT_MISMATCH`, `PAYLOAD_ROOT_MISMATCH`)
+   - it matches the signed filter (`FILTER_MISMATCH`)
+6. **Authorizations.** Each authorization record passes the same checks, and its signed document
+   verifies under the trusted key (`AUTHORIZATION_INVALID`). Redacted leaves need a matching later
+   grant (`UNAUTHORIZED_REDACTION`), and archived records need a covering run (`INVALID_ARCHIVE`).
+7. **Anchor (optional).** `--anchor-seq/--anchor-hash` must appear in the skeleton (`TRUNCATED`,
+   `ANCHOR_MISMATCH`).
+
+Results: `VERIFIED` (exit 0); `INDETERMINATE` (exit 3) when archived records are present, because their
+hashes, chain position and signed run were checked but their payload content was not; `FAILED`
+(exit 1) with the first problem; usage or unreadable input exits 2. Reports carry codes, seqs and leaf
+paths, never values.
+
+E5 still holds. The signer asserts completeness: removing a matching record and re-signing would need
+the private key, but a recipient cannot otherwise prove that every matching record in the source
+database was exported. Without an independently held checkpoint (`--anchor-*`), the head is
+authenticated only by the export signature, so a rewrite made before export cannot be ruled out.
+
 ## 9. Alternatives considered
 | Alternative | Outcome | Reason |
 |-------------|---------|--------|
