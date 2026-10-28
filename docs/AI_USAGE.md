@@ -19,7 +19,10 @@ traceability record; commits do not carry AI co-author trailers.
 - Ran dependency-resolution dry-runs for CPython 3.14 on Windows and Linux (no packages installed).
 - Drafted the Step 0 verification commands and checked their output.
 - Wrote and staged the commit 1 files and created commit 1 after candidate approval.
-- Drafted the commit 2 documents (this file, REQUIREMENTS.md, DESIGN.md, LIMITATIONS.md).
+- Drafted the commit 2 documents (this file, REQUIREMENTS.md, DESIGN.md, LIMITATIONS.md) and created
+  commit 2 after candidate approval.
+- Wrote the redaction proof of concept (`poc/redaction_poc.py`), ran it with Python 3.14.3, and
+  generated `docs/poc/redaction-poc-output.md` from the captured output.
 
 ### ChatGPT (as reported by the candidate)
 - Helped interpret and organize the assessment requirements.
@@ -54,7 +57,8 @@ candidate.
 | 6 | 2026-10-28 | Milestone 1 review | Claude Code: proposed a Co-Authored-By trailer and a pip-freeze lock file | 10 adjustments: nothing marked approved without explicit approval; attestation as a template; verify the repository before the first commit; record ChatGPT and Claude Code; no Co-Authored-By trailer; lock generated from declared dependencies; document plaintext archives and propose an improvement; tamper demo must not rely on triggers; show status and staged diff before each commit; no install, commit, push or visibility change without approval |
 | 7 | 2026-10-28 | Step 0 verification | Claude Code: verification commands; read-only checks | Candidate logged `gh` into the repository owner account, set a repository-local Git identity and confirmed the commit email is verified. Results: owner `Lakshmij12`, visibility `PRIVATE`, anonymous access 404 |
 | 8 | 2026-10-28 | Commit 1 (`2641783`) | Claude Code: .gitignore additions, attestation template, commit message | Approved as proposed; attestation details left blank for the candidate to complete |
-| 9 | 2026-10-28 | Commit 2 prepared | Claude Code: drafted the four documentation files | Candidate specified the ChatGPT entries and the content requirements; review pending |
+| 9 | 2026-10-28 | Commit 2 (`03e2d98`) | Claude Code: drafted the four documentation files | Candidate specified the ChatGPT entries and content requirements, requested five edits, then approved; committed as `03e2d98` |
+| 10 | 2026-10-28 | Commit 3 prepared: redaction proof of concept | Claude Code: wrote `poc/redaction_poc.py` (14 self-checks, synthetic data), ran it with Python 3.14.3 (exit 0, 14/14 PASS, empty stderr), and generated `docs/poc/redaction-poc-output.md` from the captured stdout | Candidate approved the script plan with two wording corrections (see §5), reviewed the test results, requested final wording checks, and approved staging. Commit 3 not yet approved or created |
 
 ChatGPT reviews of Claude Code's plans took place between these sessions (October 2026, including
 2026-10-28). The candidate reports that these reviews contributed to identifying several of the concerns
@@ -75,6 +79,8 @@ behind the refinements, corrections and adjustments in rows 4–6.
 | DESIGN.md status "approved" | Claude Code (plan v3.1 draft) | Changed to "Proposed" by candidate adjustment | Approval is recorded only when the candidate gives it explicitly |
 | Co-Authored-By trailer on commits | Claude Code | Rejected by the candidate | This log provides traceability |
 | Lock file from `pip freeze` | Claude Code | Modified by the candidate | Lock must be generated from the declared dependencies |
+| Describe removing value and salt in the PoC as deletion | Claude Code (commit 3 plan) | Modified by candidate correction | It is logical redaction from an in-memory structure, not secure deletion |
+| Describe per-leaf salts as making equal values in different records "unlinkable" | Claude Code (commit 3 plan) | Modified by candidate correction | Salts only prevent inferring equality by comparing commitments; other fields may still link records |
 
 ## 6. Errors and corrections during AI-assisted work
 - Claude Code's first `git commit` attempt for commit 1 failed because PowerShell passed the message as a
@@ -82,6 +88,9 @@ behind the refinements, corrections and adjustments in rows 4–6.
 - A `gh api --jq` filter failed because of PowerShell quoting; it was rerun with a simpler filter.
 - The Linux wheel dry-run first failed because only one platform tag was passed; it was rerun with the
   full manylinux tag set.
+- The first draft of the PoC output document described the embedded stdout as "byte-for-byte"; the
+  assembly step had converted CRLF line endings to LF, so the wording was corrected to state that
+  transformation before review.
 
 ## 7. Verification policy
 - Every file change, install, commit and push requires candidate approval.
