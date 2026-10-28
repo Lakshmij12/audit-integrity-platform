@@ -1,9 +1,10 @@
 # Limitations and Remaining Risks
 
-Implementation status (commit 5): only the pure cryptographic foundations exist (canonical JSON,
-timestamps, typed-path leaf commitments, content/record hashes and chain link checks, in
-`src/aip/crypto/`). There is no API, database, retention, archive, export or signing code yet; items about
-those describe the proposed design in DESIGN.md and will be revised as they are implemented and tested.
+Implementation status (commit 6): the pure cryptographic foundations (`src/aip/crypto/`, commit 5) and
+SQLite persistence with append-only ingestion as a service layer (`src/aip/storage/`,
+`src/aip/ingest/`, commit 6) exist. There is no HTTP API, verification endpoint, redaction, retention,
+archive, export or signing code yet; items about those describe the proposed design in DESIGN.md and
+will be revised as they are implemented and tested.
 Nothing in this repository is claimed to be production-ready, and no security control or test listed
 here is claimed to be complete.
 
@@ -83,5 +84,60 @@ here is claimed to be complete.
     construction, canonical encoding). Kept for clarity; the cost grows linearly with payload size. The
     `except` around `record_hash` in `check_chain` is unreachable after the earlier checks.
 29. **No size limits in the crypto layer (L6).** String length, identifier length and leaf count are not
-    bounded here; the API layer must enforce request size limits.
-30. `warn_unreachable` is enabled on the command line for the commit 5 gates, not yet in `pyproject.toml`.
+    bounded there. Commit 6 enforces them in the ingestion layer (DESIGN §3.1); the HTTP raw-body
+    limit is still to come (commit 7).
+30. `warn_unreachable` was enabled on the command line for the commit 5 gates; since commit 6 it is set
+    in `pyproject.toml`.
+
+## Persistence and ingestion (implemented in commit 6)
+31. **Single host, single writer.** SQLite file locks serialize writers across threads and processes on
+    one machine; they are not reliable on network filesystems, and appends are strictly sequential.
+32. **Commit outcome can be unknown to the caller.** An append is reported successful only after COMMIT
+    returns. When it fails, the error class says what is known:
+    - `StoreBusyError` and `StorageIntegrityError` (including a busy COMMIT or a constraint failure at
+      COMMIT, after which SQLite keeps the transaction open) and any `StorageError` raised before
+      COMMIT: the event was **not** committed; the transaction was rolled back.
+    - `StorageCommitUnknownError`: COMMIT failed for another reason (for example `SQLITE_IOERR`,
+      `SQLITE_FULL`, `SQLITE_NOMEM`). SQLite documents that after such errors a transaction "may or may
+      not be rolled back automatically", so the outcome is **unknown**. A rollback attempt afterwards
+      does not prove the event was never committed. The message advises checking whether the event
+      exists before retrying.
+
+    If the process crashes during or after COMMIT, the caller gets no answer at all. In both unknown
+    cases a blind retry can create a duplicate. Idempotency keys are deferred to commit 7; until then,
+    finding a stored event requires matching its content, because its eventId is derived from a hash
+    the caller does not know in advance.
+33. **eventId is a truncated hash** (`"evt_" + recordHash[:32]`, 128 bits), not a UUID and not a secret.
+    The full recordHash is authoritative. A collision is improbable (birthday bound about 2^64 records)
+    but would make the second append fail on the UNIQUE constraint rather than create an ambiguous id.
+34. **recordedAt clamping.** recordedAt never decreases; if the server clock once ran far ahead, later
+    records keep that stored recordedAt until real time catches up, which skews retention by recordedAt.
+    The future-timestamp check always uses the real clock, and nothing alerts on clock jumps yet.
+35. **Triggers block all updates and deletes in schema v1.** Redaction and retention need a controlled
+    schema migration (v2) that narrows the triggers; none exists yet. Triggers remain bug guards only.
+36. **Archived records will not be fully verifiable from the database alone.** After an archive run
+    deletes leaf rows, the retained `payload_root` and hashes prove only that the remaining metadata is
+    consistent; the archived payload's integrity needs the signed archive file and its digest (DESIGN
+    §7, C8), which are not implemented.
+37. **Plaintext at rest (concrete form of item 1).** Leaf values and their salts are stored in plaintext
+    in `payload_leaves`; the database file and its `-wal`/`-shm` files must be protected and backed up
+    together.
+38. **Schema check is strict.** Any extra table, index or trigger (for example one added for debugging)
+    makes the service refuse to open the database. This is deliberate fail-closed behavior.
+39. `STRICT` tables still apply lossless conversions (text `"1"` is stored in an INTEGER column as 1);
+    the application always binds exact types, and the CHECK constraints bound the rest.
+40. Payload limits run on input that is already in memory; the HTTP body-size limit (commit 7) is what
+    bounds memory use for large requests.
+
+### Deferred findings from the commit 6 transaction review
+41. **Cleanup after a failed rollback inside a transaction relies on SQLAlchemy (L2).** If an error occurs
+    inside a write transaction and the rollback then also fails, the connection is discarded by
+    SQLAlchemy's own close/reset handling (verified with a scratch probe: the write lock was released and
+    the next append succeeded), not by an explicit check in `database.py`; no test covers that path.
+    The failed-COMMIT path does have an explicit check and a test.
+42. **Nested use blocks itself (L3).** Calling `write_transaction()` or `IngestService.append()` from
+    inside another write transaction on the same thread waits for `busy_timeout` and then raises
+    `StoreBusyError`. `read_transaction()` does not prevent writes inside it.
+43. **Pool reset failures are logged by SQLAlchemy (L4).** A failed rollback when a connection returns to
+    the pool is logged as "Exception during reset or similar" with a traceback (no SQL parameters).
+    Logging configuration is deferred to commit 7.

@@ -1,7 +1,8 @@
 # Design: Hash Chain, Redaction, Retention and Export
 
 **Status: Proposed — pending engineer approval.** Partly implemented: §1, §2 and the chain link checks
-(C1, C2, C4, C4a) of §4 exist as pure functions (commit 5); everything else is not implemented. This
+(C1, C2, C4, C4a) of §4 exist as pure functions (commit 5); §3 persistence and append-only ingestion
+exist as a service layer without an HTTP API (commit 6); everything else is not implemented. This
 document will be marked
 approved only after explicit approval by the engineer, and updated as features are built and tested.
 
@@ -74,13 +75,63 @@ a field, resolved against stored typed paths.
 every language a recipient might use. Length extension does not apply because no secret is hashed.
 SHA-3/BLAKE2 would add no security need here and reduce recipient tooling ubiquity.
 
-## 3. Transactional append
-`BEGIN IMMEDIATE` (takes SQLite's write lock before the head is read) → read head → compute hashes →
-insert record and leaves → `COMMIT`. `UNIQUE(seq)` and `UNIQUE(prevHash)` reject forks as a second guard.
+## 3. Persistence and transactional append
+*Implemented in commit 6 (`src/aip/storage/`, `src/aip/ingest/`) as a service layer; no HTTP API yet.*
 
-Guard triggers (`BEFORE UPDATE/DELETE`) reject changes other than the controlled redaction and archive
-updates. They catch application bugs only; anyone with direct access to the database file can drop
-them. **Tamper detection never depends on the triggers** (see §10).
+**Schema v1** (explicit DDL in `storage/schema.py`, `STRICT` tables, SQLite ≥ 3.37; developed on 3.50.4):
+- `audit_records`: `seq` (INTEGER PRIMARY KEY, ≥ 1, assigned as head + 1), `event_id` (UNIQUE), the four
+  envelope identifiers, `timestamp` and `recorded_at` (the exact canonical strings that were hashed),
+  `payload_root`, `content_hash`, `prev_hash` (UNIQUE), `record_hash` (UNIQUE), `hash_version`, and the
+  reserved `archived_at` / `archive_run_id` (always NULL in v1). CHECKs enforce 64-lowercase-hex digests,
+  length bounds, `hash_version = 1`, and that exactly seq 1 links to the genesis value.
+- `payload_leaves`: `(seq, path)` primary key, `commitment`, `salt` (32-byte BLOB) and `value`. `path`
+  and `value` are the canonical JSON text the commitment covers; JSON `null` is the text `'null'`, while
+  SQL NULL in both `salt` and `value` means redacted (enforced: both NULL or neither).
+- Indexes on `(actor_id, seq)`, `(resource_type, resource_id, seq)`, `(event_type, seq)`,
+  `(timestamp, seq)` for later queries and keyset pagination.
+- `schema_meta` records `schema_version = 1`. Opening a database fails closed unless exactly the v1
+  tables, indexes and triggers exist, the version matches and the tables are `STRICT`.
+
+**Connections:** pysqlite's implicit transactions are disabled; every connection sets
+`foreign_keys=ON`, `journal_mode=WAL`, `synchronous=FULL`, `secure_delete=ON` and `busy_timeout`.
+SQLAlchemy is created with `hide_parameters=True` so SQL parameters (payload values) never appear in
+error messages.
+
+**Append** (`IngestService.append`):
+1. Outside the lock: validate the input (§3.1), enforce payload limits, then build salts, leaf
+   commitments and the payload root.
+2. `BEGIN IMMEDIATE` takes SQLite's single write lock *before* the head is read, so two writers (threads
+   or processes) can never read the same head; a second writer waits up to `busy_timeout`, then fails
+   with `StoreBusyError` having written nothing.
+3. Read the head (fail closed if malformed); take one server clock reading `now`;
+   `recordedAt = max(now, head.recordedAt)` (nondecreasing); `timestamp` = supplied value, or `now`;
+   reject a supplied timestamp more than 5 minutes after the *real* `now` (the clamp never relaxes this).
+4. Compute `contentHash`, `recordHash`, `eventId`; insert the record and its leaves; `COMMIT`.
+5. Success is reported only after COMMIT returns. Any exception rolls back; after a failed COMMIT the
+   connection is rolled back on the raw driver if SQLite still holds the transaction, then discarded
+   (even if that rollback raises). Error classes: `StoreBusyError` (BUSY/LOCKED) and
+   `StorageIntegrityError` (constraint or trigger) mean not committed; `StorageCommitUnknownError`
+   means COMMIT failed for another reason and the outcome is unknown (LIMITATIONS 32).
+
+`UNIQUE(seq)`, `UNIQUE(prev_hash)` and `UNIQUE(record_hash)` reject forks as a second guard.
+
+**eventId** = `"evt_" + recordHash[:32]`: a truncated (128-bit) hash-derived identifier, not a UUID.
+The full `recordHash` is authoritative. The derivation is re-checked whenever a record is read.
+
+Guard triggers (`BEFORE UPDATE/DELETE`) block **every** update and delete in schema v1. They catch
+application bugs only; anyone with direct access to the database file can drop them. **Tamper detection
+never depends on the triggers** (see §10). Redaction (§6) and retention (§7) need narrowly scoped
+exceptions to these triggers, which will be introduced by a controlled schema migration (v2), not by
+editing v1.
+
+### 3.1 Ingestion input
+Only `eventType`, `actorId`, `resourceType`, `resourceId`, `payload` and optional `timestamp` are
+accepted (strict types, unknown fields rejected, so server-controlled fields cannot be supplied).
+`eventType` matches `^[A-Z][A-Z0-9_]{0,127}$` and must not start with `SYSTEM_`; identifiers are
+1–256 characters (`resourceType` 1–128), NFC, without control characters. Raw JSON is parsed strictly
+(duplicate keys, floats, NaN rejected). Payload limits, checked before any salt is generated: depth 32,
+1,000 leaves, 8,192 characters per string or key, then 64 KiB of canonical JSON. Errors name the field
+and a rule code, never the submitted value.
 
 ## 4. Verification invariants (`GET /audit/verify`, streamed in batches, stops at first violation)
 | ID | Invariant | violationType |

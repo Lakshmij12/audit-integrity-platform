@@ -62,6 +62,7 @@ select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "PT", "N", "RUF"]
 [tool.mypy]
 python_version = "3.14"
 strict = true
+warn_unreachable = true
 plugins = ["pydantic.mypy"]
 mypy_path = "src"
 files = ["src", "tests"]

@@ -1,7 +1,9 @@
 # Development Setup
 
-Status: tooling and the pure cryptographic foundations (`src/aip/crypto/`, commit 5). The audit log
-service itself (API, database, retention, archive, export, signing) is not implemented yet.
+Status: tooling, the pure cryptographic foundations (`src/aip/crypto/`, commit 5), and SQLite
+persistence with append-only ingestion as a service layer (`src/aip/storage/`, `src/aip/ingest/`,
+commit 6). The HTTP API, verification endpoint, redaction, retention, archive, export and signing are
+not implemented yet.
 
 Target interpreter: CPython 3.14 (developed with 3.14.3 on Windows 10).
 
@@ -111,6 +113,18 @@ To reproduce a digest independently, write the preimage bytes to a file and hash
 Note: GNU `sha256sum` prefixes its output with `\` when the file name contains backslashes; use a
 relative name (or `--tag`) so the digest is read correctly.
 
+## Storage and ingestion tests
+`tests/storage/` and `tests/ingest/` (commit 6) run against real SQLite files in pytest's `tmp_path`
+(SQLite 3.50.4 bundled with CPython 3.14.3 on the development machine). They cover the v1 schema,
+constraints and guard triggers (tested by bypassing the application with a raw `sqlite3`
+connection), `BEGIN IMMEDIATE` locking and lock contention, rollback after a partial insert, a real
+COMMIT-time failure (a deferred foreign-key violation), error classification, input validation and
+limits, timestamp clamping, restart persistence, full recomputation of every stored record, and
+concurrent appends from 8 threads and from 2 spawned processes. COMMIT failures are also simulated at
+the driver level (`SQLITE_IOERR`, `SQLITE_FULL`, `SQLITE_BUSY`), including a ROLLBACK that itself
+fails, to check error classification and that the connection is discarded. The concurrency and
+transaction tests passed 5 out of 5 repeated runs on Windows 10.
+
 ## Quality gates
 ```powershell
 .\.venv\Scripts\python.exe -m ruff check .
@@ -149,6 +163,21 @@ was not re-run):
 | `pytest` (warnings as errors) | 0 | `259 passed` (7 smoke tests + 252 crypto unit tests) |
 | `pytest --cov --cov-branch` (report only) | 0 | `src/aip`: 98% combined statement and branch coverage; 8 uncovered lines are defensive branches made unreachable by earlier validation |
 
-`--warn-unreachable` is passed on the command line; it is not yet set in `pyproject.toml`.
+For commit 5, `--warn-unreachable` was passed on the command line; commit 6 sets it in `pyproject.toml`.
+
+Commit 6 (persistence and ingestion; no dependency changes, so pip-audit was not re-run):
+
+| Gate | Exit code | Output |
+|------|-----------|--------|
+| `mypy` right after adding `warn_unreachable = true` (before new code) | 0 | `Success: no issues found in 17 source files` (no pre-existing findings) |
+| `ruff check .` | 0 | `All checks passed!` |
+| `ruff format --check .` | 0 | `41 files already formatted` |
+| `mypy` (strict, `warn_unreachable` from `pyproject.toml`) | 0 | `Success: no issues found in 34 source files` |
+| `pytest` (warnings as errors) | 0 | `413 passed` (259 existing + 154 storage/ingestion) |
+| `pytest --cov --cov-branch` (report only) | 0 | 96% overall; `storage/errors.py` 100%, `storage/database.py` 90%, `storage/repository.py` 89%. Uncovered: connect failures, an unsupported transaction mode, exceptions raised by a rollback inside a transaction, a COMMIT failure after which SQLite already ended the transaction, an SQLite older than 3.37 and a failure to enable WAL |
+| Transaction + concurrency tests, 5 repeated runs | 0 × 5 | `33 passed` each run |
+
+Final figures after the transaction review fixes (unknown-outcome COMMIT errors, rollback failure after a
+failed COMMIT); earlier runs in the same commit reported 400 and then 397 tests.
 
 `poc/` is excluded from Ruff: it holds the redaction spike exactly as run and recorded in commit 3.
