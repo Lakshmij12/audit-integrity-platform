@@ -1,24 +1,74 @@
 # Design: Hash Chain, Redaction, Retention and Export
 
-**Status: Proposed — pending engineer approval.** Not implemented. This document will be marked
+**Status: Proposed — pending engineer approval.** Partly implemented: §1, §2 and the chain link checks
+(C1, C2, C4, C4a) of §4 exist as pure functions (commit 5); everything else is not implemented. This
+document will be marked
 approved only after explicit approval by the engineer, and updated as features are built and tested.
 
 ## 1. Deterministic serialization
-Canonical JSON: sorted keys, separators `,`/`:`, UTF-8 without escaping, strings NFC-normalized,
-no NaN/Infinity, no floats, integers |n| ≤ 2^53, duplicate keys rejected at parse time, timestamps
-RFC 3339 UTC with microseconds (`2026-10-28T12:00:00.000000Z`). Hash inputs are always canonical JSON
-arrays/objects, never raw string concatenation, so field boundaries are unambiguous.
+*Implemented in commit 5 (`src/aip/crypto/canonical.py`, `timestamps.py`).*
+
+Canonical JSON is the RFC 8785 (JCS) serialization restricted to the values the service accepts:
+
+| Element | Rule |
+|---------|------|
+| Encoding | UTF-8, no BOM, no whitespace, separators `,` and `:` |
+| Object keys | `str` only, sorted by UTF-16 code units (RFC 8785 §3.2.3); duplicate keys rejected when parsing |
+| Strings | Must already be NFC-normalized and free of lone surrogates, otherwise rejected (stricter than JCS). `"` → `\"`, `\` → `\\`; `\b \f \n \r \t`; other U+0000–U+001F as lowercase `\u00xx`; everything else, including `/`, U+007F, U+2028, U+2029, as raw UTF-8 |
+| Integers | Plain decimal, in [−(2^53−1), 2^53−1] (JavaScript safe-integer range). `bool` is never treated as an integer |
+| Other | `true`, `false`, `null`. Floats, NaN, ±Infinity and any non-JSON type are rejected; decimals travel as strings |
+| Depth | A scalar has depth 0; a container has depth 1 + the deepest member (an empty container has depth 1). At most `MAX_DEPTH = 32`, enforced identically when encoding, parsing, flattening and rebuilding payloads |
+
+Timestamps are hashed only in canonical form `YYYY-MM-DDTHH:MM:SS.ffffffZ` (UTC, exactly six fractional
+digits). Accepted input is RFC 3339 with an uppercase `T`, 0–6 fractional digits and `Z` or `±HH:MM`
+(converted to UTC). Rejected: missing offset, space or lowercase separators, lowercase `z`, more than six
+fractional digits, leap second `:60`, out-of-range time or offset fields, `-00:00`, impossible dates, and
+results outside years 0001–9999.
+
+Hash inputs are always canonical JSON arrays/objects, never raw string concatenation, so field boundaries
+are unambiguous. Cross-checks: RFC 8785 §3.2.2–3.2.4 string and literal sample (numbers removed) matches
+byte-for-byte; the §3.2.3 sorting sample is *rejected* because its key U+FB33 is not NFC (it normalizes to
+U+05D3 U+05BC), and its remaining six keys sort in the RFC's expected order.
 
 ## 2. Record hashes and genesis
+*Implemented in commit 5 (`commitments.py`, `hashing.py`).*
 ```
-leafCommitment = SHA256(canon(["aip-leaf-v1", jsonPointer, saltHex, value]))   salt = 32 random bytes
-payloadRoot    = SHA256(canon({"v":1, "leaves": {jsonPointer: leafCommitment, ...}}))
-contentHash    = SHA256(canon({"v":1, "eventType", "actorId", "resourceType", "resourceId",
-                               "timestamp", "payloadRoot"}))
-recordHash     = SHA256(canon({"v":1, "seq", "recordedAt", "prevHash", "contentHash"}))
+leafCommitment = SHA256(canon(["aip-leaf-v1", typedPath, saltHex, value]))      salt = 32 random bytes
+payloadRoot    = SHA256(canon({"t":"aip.payload","v":1,
+                               "leaves":[[typedPath, leafCommitment], ...]}))  ordered by canon(typedPath)
+contentHash    = SHA256(canon({"t":"aip.content","v":1,"eventType","actorId","resourceType",
+                               "resourceId","timestamp","payloadRoot"}))
+recordHash     = SHA256(canon({"t":"aip.record","v":1,"seq","recordedAt","prevHash","contentHash"}))
 GENESIS        = 64 hex zeros — the prevHash of seq 1
 ```
+- A **typed path** is a JSON array of the steps from the payload root to a leaf: strings for object keys,
+  integers for array indices. Leaves are scalars and empty containers; non-empty containers are not leaves.
+  The empty payload `{}` is the single leaf `[]` (path) with value `{}`. That root leaf is the only
+  leaf with an empty path: it must be revealed and hold exactly `{}` (no array, scalar or `null`), and
+  it cannot be redacted.
+- `payloadRoot` uses only paths and commitments, never values or salts. A matching root therefore
+  proves the commitments are intact, **not** that revealed values match them: a value changed without
+  its commitment leaves the root unchanged and is caught only by the per-leaf check (C5). Verification
+  must run both; a combined `verify_payload` API is deferred to the verification milestone.
+- The `"t"` domain tags make each hash's purpose explicit; the structures were already distinct.
+- All digests and salts are 64 lowercase hex characters; `seq` is an integer in [1, 2^53−1];
+  `eventType`, `actorId`, `resourceType`, `resourceId` are non-empty NFC strings. Every input is
+  validated before hashing.
+- A leaf set is accepted only if it could come from exactly one payload: at least one leaf, unique paths,
+  no leaf path is a prefix of another, children of one parent are all keys or all indices, indices are
+  exactly 0..n−1, and the root is an object.
+
 `recordedAt` is in the record envelope so it remains protected after archival (retention depends on it).
+
+### 2.1 Post-spike finding: JSON Pointer paths were ambiguous
+The commit 3 proof of concept, and the earlier version of this section, committed leaves under RFC 6901
+JSON Pointer strings. A pointer such as `/a/0` does not say whether `0` is an array index or an object key,
+so `{"a": ["x"]}` and `{"a": {"0": "x"}}` produced the same leaves, payload root and contentHash: an
+attacker could change an array into an object with numeric keys (or back) without detection. The PoC's
+14 checks did not cover this case. Commit 5 commits typed paths instead; the regression test
+`test_typed_path_regression_vectors` shows the two payloads now have different roots. The commit 3 PoC is
+kept unchanged as a historical record; JSON Pointer strings remain only as a way for API callers to name
+a field, resolved against stored typed paths.
 
 **Why SHA-256:** 128-bit collision resistance; FIPS 180-4 approved; in the Python standard library and
 every language a recipient might use. Length extension does not apply because no secret is hashed.
@@ -36,10 +86,11 @@ them. **Tamper detection never depends on the triggers** (see §10).
 | ID | Invariant | violationType |
 |----|-----------|---------------|
 | C1 | `seq` contiguous 1..N | `SEQUENCE_GAP` |
-| C2 | `prevHash(1) = GENESIS`; `prevHash(n) = recordHash(n-1)` | `PREV_HASH_MISMATCH` |
+| C2 | `prevHash(1) = GENESIS`; `prevHash(n) = recordHash(n-1)` (for a well-formed `prevHash`) | `PREV_HASH_MISMATCH` |
 | C3 | Recomputed `contentHash` equals stored | `CONTENT_HASH_MISMATCH` |
 | C4 | Recomputed `recordHash` equals stored | `RECORD_HASH_MISMATCH` |
-| C5 | Each revealed leaf: `commit(path, salt, value)` equals stored commitment | `LEAF_COMMITMENT_MISMATCH` |
+| C4a | Stored chain fields are well-formed (64-hex `prevHash` and `contentHash`, canonical `recordedAt`); malformed rows are reported, never raised | `MALFORMED_RECORD` |
+| C5 | Each revealed leaf: `commit(path, salt, value)` equals stored commitment. Leaf checks return `VALID`, `INVALID` or `REDACTED_UNVERIFIED`; a redacted leaf is never reported as valid | `LEAF_COMMITMENT_MISMATCH` |
 | C6 | Each leaf without a value is covered by a valid signed redaction authorization (§6) | `UNAUTHORIZED_REDACTION` |
 | C7 | Each archived row is covered by a valid signed retention authorization (§7) | `INVALID_ARCHIVE` |
 | C8 | Archive file digest equals the signed digest, and each archived record's `payloadRoot` recomputes from the file | `ARCHIVE_CONTENT_MISMATCH` |

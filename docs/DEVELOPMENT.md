@@ -1,6 +1,7 @@
 # Development Setup
 
-Status: tooling only. The audit log service is not implemented yet.
+Status: tooling and the pure cryptographic foundations (`src/aip/crypto/`, commit 5). The audit log
+service itself (API, database, retention, archive, export, signing) is not implemented yet.
 
 Target interpreter: CPython 3.14 (developed with 3.14.3 on Windows 10).
 
@@ -88,6 +89,28 @@ The locks were generated on Windows 10 with CPython 3.14.3.
 SQLite WAL and `BEGIN IMMEDIATE`, SQLAlchemy, Pydantic strict models and the FastAPI test client.
 They do not test the audit log service.
 
+## Cryptographic foundation tests
+`tests/crypto/` covers canonical JSON, strict parsing, timestamps, typed-path leaf commitments, payload
+roots, redaction stability, content/record hashes and chain link checks (commit 5). These are unit tests
+of pure functions; they do not exercise any API or database.
+
+### Known-answer vectors
+`tests/crypto/vectors.py` holds 22 vectors. For each one, the preimage bytes are written by hand from the
+specification in DESIGN.md §1–2 (not produced by project code), and the SHA-256 digest was computed over
+those exact bytes with two external tools that agreed on all 22 (2026-10-28):
+- GNU coreutils `sha256sum` 8.32 (Git for Windows), run as `sha256sum -b <file>` with a relative file name;
+- PowerShell 5.1 `Get-FileHash -Algorithm SHA256 -LiteralPath <file>`.
+
+Later vectors embed earlier digests (leaf → payload root → content → record 1 → record 2), so they were
+computed in that order. The tests then check, for each vector, that the project's function produces the
+same bytes or digest. Two vectors are cross-checked against RFC 8785: the §3.2.2 string/literal sample
+(expected bytes taken from the §3.2.4 hex dump, with the float `numbers` member removed) and the §3.2.3
+sorting sample (without U+FB33, which is not NFC; the full sample is tested as rejected).
+
+To reproduce a digest independently, write the preimage bytes to a file and hash it with either tool.
+Note: GNU `sha256sum` prefixes its output with `\` when the file name contains backslashes; use a
+relative name (or `--tag`) so the digest is read correctly.
+
 ## Quality gates
 ```powershell
 .\.venv\Scripts\python.exe -m ruff check .
@@ -105,6 +128,8 @@ pip-based resolution and is valid only for hashed files; the default vulnerabili
 result is not a claim that the dependencies have no vulnerabilities.
 
 ### Quality gate results (2026-10-28, Windows 10, CPython 3.14.3)
+Commit 4 (tooling only):
+
 | Gate | Exit code | Output |
 |------|-----------|--------|
 | `ruff check .` | 0 | `All checks passed!` |
@@ -112,5 +137,18 @@ result is not a claim that the dependencies have no vulnerabilities.
 | `mypy` (strict) | 0 | `Success: no issues found in 2 source files` |
 | `pytest -v` | 0 | `7 passed in 1.14s` (runtime/tooling smoke tests only) |
 | `pip_audit` (command above, service `pypi`) | 0 | `No known vulnerabilities found` (run at 2026-10-28T09:18-04:00) |
+
+Commit 5 (cryptographic foundations, after review corrections; no dependency changes, so pip-audit
+was not re-run):
+
+| Gate | Exit code | Output |
+|------|-----------|--------|
+| `ruff check .` | 0 | `All checks passed!` |
+| `ruff format --check .` | 0 | `24 files already formatted` |
+| `mypy --warn-unreachable` (strict) | 0 | `Success: no issues found in 17 source files` |
+| `pytest` (warnings as errors) | 0 | `259 passed` (7 smoke tests + 252 crypto unit tests) |
+| `pytest --cov --cov-branch` (report only) | 0 | `src/aip`: 98% combined statement and branch coverage; 8 uncovered lines are defensive branches made unreachable by earlier validation |
+
+`--warn-unreachable` is passed on the command line; it is not yet set in `pyproject.toml`.
 
 `poc/` is excluded from Ruff: it holds the redaction spike exactly as run and recorded in commit 3.
