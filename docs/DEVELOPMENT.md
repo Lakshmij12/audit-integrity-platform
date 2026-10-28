@@ -125,6 +125,31 @@ the driver level (`SQLITE_IOERR`, `SQLITE_FULL`, `SQLITE_BUSY`), including a ROL
 fails, to check error classification and that the connection is discarded. The concurrency and
 transaction tests passed 5 out of 5 repeated runs on Windows 10.
 
+## Running the API (commit 7)
+The project is not pip-installed, so `src/` must be on the import path: uvicorn takes `--app-dir src`,
+and the CLI needs `PYTHONPATH`.
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m aip.cli new-api-key --role writer    # prints the key once + its entry
+.\.venv\Scripts\python.exe -m aip.cli new-api-key --role auditor
+$env:AIP_API_KEYS = "writer:<sha256hex>,auditor:<sha256hex>"         # entries printed above
+$env:AIP_DB_PATH  = "data/audit.db"                                   # default; data/ is git-ignored
+.\.venv\Scripts\python.exe -m uvicorn aip.api.app:create_app --factory --app-dir src
+```
+Swagger UI is at `http://127.0.0.1:8000/docs`. Clients send the key in `X-API-Key`. Settings:
+`AIP_DB_PATH`, `AIP_API_KEYS`, `AIP_BUSY_TIMEOUT_MS` (default 5000), `AIP_MAX_BODY_BYTES`
+(default 131072). With no keys configured, every request is rejected.
+
+Endpoints in commit 7: `POST /audit/events` (writer, admin; 201), `GET /audit/events` (auditor, admin;
+filters `actorId`, `resourceType`, `resourceId`, `eventType`, `from` inclusive, `to` exclusive; keyset
+pagination with `limit` 1–200, default 50, and `cursor` = `nextCursor`), `GET /audit/events/{eventId}`
+(auditor, admin). Errors are RFC 9457 `application/problem+json` with a `code`, `requestId` and, for
+validation, `issues` (field and rule code only).
+
+Smoke-tested on 2026-10-28 with the commands above against a scratch database: POST 201 with a
+`Location` header, filtered GET 200, a writer key on GET 403, `/docs` 200, JSON access log lines without
+API keys.
+
 ## Quality gates
 ```powershell
 .\.venv\Scripts\python.exe -m ruff check .
@@ -179,5 +204,15 @@ Commit 6 (persistence and ingestion; no dependency changes, so pip-audit was not
 
 Final figures after the transaction review fixes (unknown-outcome COMMIT errors, rollback failure after a
 failed COMMIT); earlier runs in the same commit reported 400 and then 397 tests.
+
+Commit 7 (HTTP API; no dependency changes, so pip-audit was not re-run):
+
+| Gate | Exit code | Output |
+|------|-----------|--------|
+| `ruff check .` | 0 | `All checks passed!` |
+| `ruff format --check .` | 0 | `53 files already formatted` |
+| `mypy` (strict, `warn_unreachable`) | 0 | `Success: no issues found in 46 source files` |
+| `pytest` (warnings as errors) | 0 | `478 passed` (413 existing + 65 API) |
+| Live run of the documented uvicorn command | — | see "Running the API" |
 
 `poc/` is excluded from Ruff: it holds the redaction spike exactly as run and recorded in commit 3.

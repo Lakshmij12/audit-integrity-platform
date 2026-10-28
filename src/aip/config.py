@@ -1,0 +1,16 @@
+"""Service configuration from environment variables (prefix ``AIP_``)."""
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Runtime settings. Secrets are never stored here in clear: API keys are SHA-256 hashes."""
+
+    model_config = SettingsConfigDict(env_prefix="AIP_", extra="ignore")
+
+    db_path: str = "data/audit.db"
+    busy_timeout_ms: int = Field(default=5000, ge=0)
+    # Comma-separated "role:sha256hex" entries; generate with `python -m aip.cli new-api-key`.
+    api_keys: str = ""
+    max_body_bytes: int = Field(default=131_072, ge=1024)  # 128 KiB raw request body

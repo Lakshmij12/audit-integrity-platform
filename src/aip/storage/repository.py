@@ -172,6 +172,61 @@ def read_record(conn: Connection, seq: int) -> StoredRecord | None:
     return None if row is None else _to_record(row)
 
 
+@dataclass(frozen=True, slots=True)
+class RecordFilter:
+    """Equality filters and a half-open [from_ts, to_ts) range on the canonical event timestamp."""
+
+    actor_id: str | None = None
+    resource_type: str | None = None
+    resource_id: str | None = None
+    event_type: str | None = None
+    from_ts: str | None = None
+    to_ts: str | None = None
+
+
+_FILTER_CLAUSES: Final = (
+    ("actor_id", "actor_id = :actor_id"),
+    ("resource_type", "resource_type = :resource_type"),
+    ("resource_id", "resource_id = :resource_id"),
+    ("event_type", "event_type = :event_type"),
+    ("from_ts", "timestamp >= :from_ts"),
+    ("to_ts", "timestamp < :to_ts"),
+)
+
+
+def query_records(
+    conn: Connection, filters: RecordFilter, *, after_seq: int, limit: int
+) -> list[StoredRecord]:
+    """Records matching every given filter, in seq order, with seq > after_seq (keyset paging).
+
+    Returns at most ``limit`` records. Only constant SQL fragments are combined; every value is a
+    bound parameter.
+    """
+    if type(after_seq) is not int or after_seq < 0 or type(limit) is not int or limit < 1:
+        raise ValueError("after_seq must be >= 0 and limit >= 1")
+    clauses = ["seq > :after_seq"]
+    params: dict[str, object] = {"after_seq": after_seq, "limit": limit}
+    for name, clause in _FILTER_CLAUSES:
+        value = getattr(filters, name)
+        if value is not None:
+            clauses.append(clause)
+            params[name] = value
+    sql = (
+        f"SELECT {_RECORD_COLUMNS} FROM audit_records WHERE "  # noqa: S608 - constant fragments
+        + " AND ".join(clauses)
+        + " ORDER BY seq LIMIT :limit"
+    )
+    return [_to_record(row) for row in conn.execute(text(sql), params).all()]
+
+
+def read_record_by_event_id(conn: Connection, event_id: str) -> StoredRecord | None:
+    row = conn.execute(
+        text(f"SELECT {_RECORD_COLUMNS} FROM audit_records WHERE event_id = :e"),  # noqa: S608
+        {"e": event_id},
+    ).first()
+    return None if row is None else _to_record(row)
+
+
 def iter_chain_entries(conn: Connection, *, batch_size: int = 1000) -> Iterator[ChainEntry]:
     """Stream the chain fields of every record in seq order, unvalidated, for ``check_chain``."""
     if type(batch_size) is not int or batch_size < 1:

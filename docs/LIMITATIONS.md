@@ -1,10 +1,10 @@
 # Limitations and Remaining Risks
 
-Implementation status (commit 6): the pure cryptographic foundations (`src/aip/crypto/`, commit 5) and
-SQLite persistence with append-only ingestion as a service layer (`src/aip/storage/`,
-`src/aip/ingest/`, commit 6) exist. There is no HTTP API, verification endpoint, redaction, retention,
-archive, export or signing code yet; items about those describe the proposed design in DESIGN.md and
-will be revised as they are implemented and tested.
+Implementation status (commit 7): the pure cryptographic foundations (`src/aip/crypto/`, commit 5),
+SQLite persistence with append-only ingestion (`src/aip/storage/`, `src/aip/ingest/`, commit 6) and
+the HTTP write and query API (`src/aip/api/`, commit 7) exist. There is no verification endpoint,
+redaction, retention, archive, export or signing code yet; items about those describe the proposed
+design in DESIGN.md and will be revised as they are implemented and tested.
 Nothing in this repository is claimed to be production-ready, and no security control or test listed
 here is claimed to be complete.
 
@@ -140,4 +140,21 @@ here is claimed to be complete.
     `StoreBusyError`. `read_transaction()` does not prevent writes inside it.
 43. **Pool reset failures are logged by SQLAlchemy (L4).** A failed rollback when a connection returns to
     the pool is logged as "Exception during reset or similar" with a traceback (no SQL parameters).
-    Logging configuration is deferred to commit 7.
+    Commit 7 adds JSON logging for the `aip` loggers only; SQLAlchemy's own logging is unchanged.
+
+## HTTP API (implemented in commit 7)
+44. **Static API keys.** Keys are long random strings whose SHA-256 hashes are configured in the
+    environment; there is no rotation workflow, expiry, revocation list, MFA or per-client identity
+    beyond a key-hash prefix in logs. Changing keys requires a restart.
+45. **No TLS and no rate limiting in the service.** Keys travel in a header, so the API must sit behind
+    TLS (for example a reverse proxy) outside a local demo; nothing limits request rates.
+46. **No idempotency keys** (still deferred): a client retrying after a timeout or a
+    `commit_outcome_unknown` response can create a duplicate event.
+47. **Writers cannot read and auditors cannot write**; `admin` can do both. There is no finer-grained
+    authorization (for example per resource), and reads are not yet audited themselves (Scenario C).
+48. **Query results include payload values in plaintext** for any auditor key; there is no field-level
+    access control. Reading a redacted record is not supported yet (redaction arrives in commit 9).
+49. **Filtering uses the caller-supplied event `timestamp`** (half-open `[from, to)`), not `recordedAt`;
+    results are ordered by `seq`. Equality filters are exact matches; there is no full-text search.
+50. **Logging is minimal**: one JSON access line per request and error events without messages or
+    tracebacks (to avoid leaking data), so diagnosing unexpected errors relies on the request ID.

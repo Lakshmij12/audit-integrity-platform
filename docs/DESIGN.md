@@ -2,7 +2,8 @@
 
 **Status: Proposed — pending engineer approval.** Partly implemented: §1, §2 and the chain link checks
 (C1, C2, C4, C4a) of §4 exist as pure functions (commit 5); §3 persistence and append-only ingestion
-exist as a service layer without an HTTP API (commit 6); everything else is not implemented. This
+exist as a service layer (commit 6) with the write and query HTTP API (commit 7, see
+docs/DEVELOPMENT.md "Running the API"); everything else is not implemented. This
 document will be marked
 approved only after explicit approval by the engineer, and updated as features are built and tested.
 
