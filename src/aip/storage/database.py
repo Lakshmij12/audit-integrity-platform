@@ -117,6 +117,19 @@ class Database:
             ensure_schema(conn)
         return self
 
+    def checkpoint_wal(self) -> bool:
+        """Best effort ``PRAGMA wal_checkpoint(TRUNCATE)``: copy the WAL into the main file and
+        truncate it, so removed values do not linger in the WAL. True if SQLite reported it
+        complete. Runs outside any transaction and never raises. It does not reach backups,
+        copies or free filesystem blocks."""
+        try:
+            with self._engine.connect() as conn:
+                raw = _driver_connection(conn)
+                busy = raw.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0]
+        except Exception:
+            return False
+        return bool(busy == 0)
+
     def close(self) -> None:
         self._engine.dispose()
 

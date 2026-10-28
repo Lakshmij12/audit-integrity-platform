@@ -19,6 +19,7 @@ from fastapi import HTTPException, Request, status
 ROLES: Final = frozenset({"writer", "auditor", "admin"})
 CAN_WRITE: Final = frozenset({"writer", "admin"})
 CAN_READ: Final = frozenset({"auditor", "admin"})
+CAN_ADMINISTER: Final = frozenset({"admin"})  # redaction and retention
 API_KEY_HEADER: Final = "X-API-Key"
 _HASH = re.compile(r"[0-9a-f]{64}", re.ASCII)
 
@@ -85,3 +86,7 @@ def require_writer(request: Request) -> Principal:
 
 def require_reader(request: Request) -> Principal:
     return _require(request, CAN_READ)
+
+
+def require_admin(request: Request) -> Principal:
+    return _require(request, CAN_ADMINISTER)

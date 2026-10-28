@@ -229,7 +229,7 @@ def read_record_by_event_id(conn: Connection, event_id: str) -> StoredRecord | N
 
 RAW_RECORD_COLUMNS: Final = (
     "seq, event_id, event_type, actor_id, resource_type, resource_id, timestamp, recorded_at, "
-    "payload_root, content_hash, prev_hash, record_hash, hash_version, archived_at"
+    "payload_root, content_hash, prev_hash, record_hash, hash_version, archived_at, archive_run_id"
 )
 
 
@@ -266,6 +266,75 @@ def load_raw_leaves(conn: Connection, seq: object) -> list[tuple[object, ...]]:
             {"seq": seq},
         ).all()
     ]
+
+
+SYSTEM_EVENT_PREFIX: Final = "SYSTEM_"
+
+
+def archive_state(conn: Connection, seq: int) -> tuple[str, str] | None:
+    """(archived_at, archive_run_id) of an archived record, or None if it is not archived."""
+    row = conn.execute(
+        text("SELECT archived_at, archive_run_id FROM audit_records WHERE seq = :seq"),
+        {"seq": seq},
+    ).first()
+    if row is None or row[0] is None:
+        return None
+    return str(row[0]), str(row[1])
+
+
+def redact_leaves(conn: Connection, seq: int, paths: Sequence[str]) -> None:
+    """Remove value and salt of the given revealed leaves (canonical path text); commitments stay.
+
+    Schema v2 allows exactly this UPDATE; any other change is aborted by the guard trigger.
+    """
+    for path in paths:
+        result = conn.execute(
+            text(
+                "UPDATE payload_leaves SET salt = NULL, value = NULL "
+                "WHERE seq = :seq AND path = :path AND salt IS NOT NULL"
+            ),
+            {"seq": seq, "path": path},
+        )
+        if result.rowcount != 1:
+            raise StorageIntegrityError("a leaf to redact was missing or already redacted")
+
+
+def retention_candidates(conn: Connection, cutoff: str, *, limit: int) -> list[int]:
+    """Seqs of non-archived, non-SYSTEM_* records with recordedAt < cutoff, in seq order."""
+    rows = conn.execute(
+        text(
+            "SELECT seq FROM audit_records WHERE archived_at IS NULL AND recorded_at < :cutoff "
+            "AND event_type NOT GLOB 'SYSTEM_*' ORDER BY seq LIMIT :limit"
+        ),
+        {"cutoff": cutoff, "limit": limit},
+    ).all()
+    return [int(row[0]) for row in rows]
+
+
+def archive_record(conn: Connection, seq: int, *, archived_at: str, run_id: str) -> None:
+    """Mark one record archived, then delete its leaves (already written to the archive file)."""
+    result = conn.execute(
+        text(
+            "UPDATE audit_records SET archived_at = :at, archive_run_id = :run "
+            "WHERE seq = :seq AND archived_at IS NULL"
+        ),
+        {"at": archived_at, "run": run_id, "seq": seq},
+    )
+    if result.rowcount != 1:
+        raise StorageIntegrityError("a record to archive was missing or already archived")
+    conn.execute(text("DELETE FROM payload_leaves WHERE seq = :seq"), {"seq": seq})
+
+
+def system_record_seqs(conn: Connection, event_types: Sequence[str]) -> list[tuple[int, str]]:
+    """(seq, event_type) of every record whose type is one of ``event_types``, in seq order."""
+    rows = conn.execute(
+        text(
+            "SELECT seq, event_type FROM audit_records "
+            "WHERE event_type IN (SELECT value FROM json_each(:types)) ORDER BY seq"
+        ),
+        {"types": canonical_json(list(event_types)).decode("utf-8")},
+    ).all()
+    return [(row[0], row[1]) for row in rows if type(row[0]) is int and type(row[1]) is str]
 
 
 def iter_chain_entries(conn: Connection, *, batch_size: int = 1000) -> Iterator[ChainEntry]:

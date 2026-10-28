@@ -176,7 +176,8 @@ here is claimed to be complete.
     (owner-only permissions on POSIX; Windows uses inherited ACLs). There is no rotation, revocation or
     HSM; a host compromise allows forged checkpoints. `keyId` is a 64-bit fingerprint (identification,
     not security).
-55. **Redacted and archived states are INDETERMINATE until commit 9.** Leaves without value and salt and
+55. **(Superseded by commit 9; see 58–66.) Redacted and archived states were INDETERMINATE until
+    commit 9.** Leaves without value and salt and
     rows with `archived_at` set are counted as unverified and make the status `INDETERMINATE` (`intact:
     null`). They are not reported as tampering, even if they were faked to hide an edit; authorizations
     (C6–C8) will decide that.
@@ -185,3 +186,35 @@ here is claimed to be complete.
 57. **Verification cost is a full walk per request** (O(records + leaves), one read snapshot, one leaf
     query per record). Both `GET /audit/verify` and `GET /audit/checkpoints/latest` do this, and nothing
     rate-limits them, so large logs need batching by range or incremental verification.
+
+## Redaction and retention (implemented in commit 9)
+58. **Authorizations are trusted only under the service's own key.** The verifier trusts exactly the
+    configured signing key. There is no separate list of trusted public keys, no key rotation and no
+    revocation. Without a key, redaction and archive runs return 503, and verifying existing ones gives
+    `INDETERMINATE`. A stolen admin API key can request valid redactions and runs (DESIGN.md §6).
+59. **No secure deletion is claimed.** Redaction and archival remove values from the live database, run
+    with `secure_delete=ON`, and are followed by a best-effort `wal_checkpoint(TRUNCATE)`; one test checks
+    the main and WAL files. Copies made before that point keep the values: backups, filesystem
+    snapshots, OS caches, SSD remapped blocks, earlier exports, and any archive file written before the
+    redaction (item 2).
+60. **Archive files are plaintext and unencrypted** (item 3), and archived records cannot be redacted
+    (409, item 4). Leaves redacted before archival are archived as redacted, without value or salt.
+61. **The archive file and the database change are not one atomic operation.** The file is written
+    durably before the transaction commits. A crash afterwards leaves an orphan file, which is not
+    cleaned up automatically. The directory itself is not fsynced after the rename, so on POSIX a power
+    loss can lose the rename; the transaction then never committed, and the run simply did not happen.
+62. **Archive availability is not monitored.** A missing archive file makes verification `INDETERMINATE`.
+    There is no restore endpoint and no replication. The verifier reads each archive file fully into
+    memory once per request.
+63. **Retention policy is global and simple.** There is one window (`AIP_RETENTION_WINDOW_DAYS`) based on
+    `recordedAt`, at most 10,000 records per run, and no per-event-type policy, legal hold or schedule;
+    an admin triggers each run. The write lock is held while the archive file is written.
+64. **Redaction metadata stays visible:** the paths, the free-text `reason` and the admin key id in
+    `SYSTEM_REDACTION` (item 6). Admins must not put sensitive data in `reason`. A redacted leaf reads as
+    `null`, so the API marks it in `redactedPaths`.
+65. **The guard triggers are a safety net for application bugs, not a security boundary.** Anyone with
+    file access can drop them. Detection relies on verification (C6–C8), which the tamper tests run with
+    the triggers dropped.
+66. **The schema migration only goes forward.** Opening a v1 file with this code migrates it to v2
+    automatically. Earlier code refuses a v2 file (it fails closed on the version), and there is no
+    downgrade.

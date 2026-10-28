@@ -14,12 +14,15 @@ affects the future-timestamp check, which always uses the real clock reading, an
 timestamp defaults to the real clock reading, not to the clamped recordedAt.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Final, Protocol
 
+from sqlalchemy import Connection
+
 from aip.crypto.canonical import canonical_json
-from aip.crypto.commitments import build_leaves, payload_root
+from aip.crypto.commitments import Leaf, build_leaves, payload_root
 from aip.crypto.hashing import GENESIS_HASH, HASH_VERSION, content_hash, record_hash
 from aip.crypto.timestamps import format_timestamp, parse_timestamp
 from aip.ingest.models import (
@@ -78,44 +81,75 @@ class IngestService:
         root = payload_root(leaves)
 
         with self._database.write_transaction() as conn:
-            head = repository.read_head(conn)
-            now = self._clock.now()
-            now_text = format_timestamp(now)  # rejects naive or non-datetime clock output
-            recorded_at = now_text if head is None else max(now_text, head.recorded_at)
-            if event.timestamp is None:
-                timestamp = now_text
-            elif parse_timestamp(event.timestamp) > now + FUTURE_TOLERANCE:
-                raise IngestValidationError([Issue("timestamp", "too_far_in_future")])
-            else:
-                timestamp = event.timestamp
-            seq = 1 if head is None else head.seq + 1
-            prev_hash = GENESIS_HASH if head is None else head.record_hash
-            content = content_hash(
+            result = append_in_transaction(
+                conn,
+                self._clock,
                 event_type=event.event_type,
                 actor_id=event.actor_id,
                 resource_type=event.resource_type,
                 resource_id=event.resource_id,
-                timestamp=timestamp,
-                payload_root=root,
+                timestamp=event.timestamp,
+                leaves=leaves,
+                root=root,
             )
-            digest = record_hash(
-                seq=seq, recorded_at=recorded_at, prev_hash=prev_hash, content_hash=content
-            )
-            record = StoredRecord(
-                seq=seq,
-                event_id=derive_event_id(digest),
-                event_type=event.event_type,
-                actor_id=event.actor_id,
-                resource_type=event.resource_type,
-                resource_id=event.resource_id,
-                timestamp=timestamp,
-                recorded_at=recorded_at,
-                payload_root=root,
-                content_hash=content,
-                prev_hash=prev_hash,
-                record_hash=digest,
-                hash_version=HASH_VERSION,
-            )
-            repository.insert_record(conn, record, leaves)
         # Reached only if COMMIT returned without error.
-        return AppendResult(seq, record.event_id, recorded_at, timestamp, content, digest)
+        return result
+
+
+def append_in_transaction(
+    conn: Connection,
+    clock: Clock,
+    *,
+    event_type: str,
+    actor_id: str,
+    resource_type: str,
+    resource_id: str,
+    timestamp: str | None,
+    leaves: Sequence[Leaf],
+    root: str,
+) -> AppendResult:
+    """Append one record inside the caller's ``BEGIN IMMEDIATE`` transaction.
+
+    Used by ``IngestService.append`` (client events, validated by ``EventInput``) and by the
+    lifecycle service for ``SYSTEM_*`` events, so a mutation and the event authorizing it commit or
+    roll back together. The caller has validated the envelope and built ``leaves``/``root`` (outside
+    the lock where possible).
+    """
+    head = repository.read_head(conn)
+    now = clock.now()
+    now_text = format_timestamp(now)  # rejects naive or non-datetime clock output
+    recorded_at = now_text if head is None else max(now_text, head.recorded_at)
+    if timestamp is None:
+        timestamp = now_text
+    elif parse_timestamp(timestamp) > now + FUTURE_TOLERANCE:
+        raise IngestValidationError([Issue("timestamp", "too_far_in_future")])
+    seq = 1 if head is None else head.seq + 1
+    prev_hash = GENESIS_HASH if head is None else head.record_hash
+    content = content_hash(
+        event_type=event_type,
+        actor_id=actor_id,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        timestamp=timestamp,
+        payload_root=root,
+    )
+    digest = record_hash(
+        seq=seq, recorded_at=recorded_at, prev_hash=prev_hash, content_hash=content
+    )
+    record = StoredRecord(
+        seq=seq,
+        event_id=derive_event_id(digest),
+        event_type=event_type,
+        actor_id=actor_id,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        timestamp=timestamp,
+        recorded_at=recorded_at,
+        payload_root=root,
+        content_hash=content,
+        prev_hash=prev_hash,
+        record_hash=digest,
+        hash_version=HASH_VERSION,
+    )
+    repository.insert_record(conn, record, leaves)
+    return AppendResult(seq, record.event_id, recorded_at, timestamp, content, digest)

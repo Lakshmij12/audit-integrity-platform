@@ -17,10 +17,12 @@ from fastapi import FastAPI, Request, Response
 from aip.api.auth import parse_api_keys
 from aip.api.errors import install_error_handlers
 from aip.api.routes_events import router as events_router
+from aip.api.routes_lifecycle import router as lifecycle_router
 from aip.api.routes_verify import router as verify_router
 from aip.config import Settings
 from aip.crypto.signing import Signer
 from aip.ingest import Clock, IngestService, SystemClock
+from aip.lifecycle import LifecycleService
 from aip.storage import DatabaseConfig, open_database
 
 _STANDARD_RECORD_KEYS = frozenset(vars(logging.makeLogRecord({})))
@@ -65,6 +67,13 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
         database = open_database(DatabaseConfig(db_path, busy_timeout_ms=settings.busy_timeout_ms))
         app.state.database = database
         app.state.ingest = IngestService(database, clock=clock)
+        app.state.lifecycle = LifecycleService(
+            database,
+            signer=signer,
+            clock=app.state.clock,
+            archive_dir=Path(settings.archive_dir),
+            window_days=settings.retention_window_days,
+        )
         try:
             yield
         finally:
@@ -107,4 +116,5 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
     install_error_handlers(app)
     app.include_router(events_router)
     app.include_router(verify_router)
+    app.include_router(lifecycle_router)
     return app

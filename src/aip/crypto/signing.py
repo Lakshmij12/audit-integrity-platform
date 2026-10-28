@@ -120,6 +120,25 @@ def sign_checkpoint(signer: Signer, *, seq: int, record_hash: str, signed_at: st
     return Checkpoint(seq, record_hash, signed_at, signer.key_id, signer.sign(message))
 
 
+def sign_document(signer: Signer, document: dict[str, Any]) -> str:
+    """Sign ``canon(document)``. Documents carry their own ``t`` (type tag), ``v`` and ``keyId``,
+    so a signature for one document type can never be replayed as another."""
+    if document.get("keyId") != signer.key_id or type(document.get("t")) is not str:
+        raise CryptoInputError("a signed document needs a type tag and the signer's keyId")
+    return signer.sign(canonical_json(document))
+
+
+def verify_document(document: object, signature: object, public_key: Ed25519PublicKey) -> bool:
+    """True only if ``signature`` is a valid Ed25519 signature of ``canon(document)``."""
+    try:
+        if type(document) is not dict or type(signature) is not str:
+            return False
+        public_key.verify(bytes.fromhex(signature), canonical_json(document))
+    except InvalidSignature, ValueError, CryptoInputError:
+        return False
+    return True
+
+
 def verify_checkpoint(checkpoint: dict[str, Any], public_key_raw_hex: str) -> bool:
     """True only if the checkpoint is well-formed and signed by the given public key."""
     try:

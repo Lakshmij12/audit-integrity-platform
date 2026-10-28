@@ -10,7 +10,7 @@ from starlette.concurrency import run_in_threadpool
 from aip.api.auth import Principal, require_reader, require_writer
 from aip.api.errors import PayloadTooLargeError
 from aip.api.schemas import AppendResponse, EventPage, EventView
-from aip.crypto import normalize_timestamp, unflatten
+from aip.crypto import Leaf, normalize_timestamp, unflatten
 from aip.crypto.errors import CryptoInputError
 from aip.ingest import IngestService, IngestValidationError, Issue, parse_event_json
 from aip.storage import Database, StoredRecord, load_leaves
@@ -20,6 +20,7 @@ DEFAULT_LIMIT: Final = 50
 MAX_LIMIT: Final = 200
 _EVENT_ID = re.compile(r"evt_[0-9a-f]{32}", re.ASCII)
 _CURSOR = re.compile(r"[1-9][0-9]{0,15}", re.ASCII)
+_DISPLAY_SALT: Final = bytes(32)
 
 router = APIRouter(prefix="/audit", tags=["events"])
 
@@ -74,6 +75,13 @@ async def append_event(
 
 def _view(conn: Connection, record: StoredRecord) -> EventView:
     leaves = load_leaves(conn, record.seq)
+    redacted = [list(leaf.path) for leaf in leaves if leaf.is_redacted]
+    # For display only: a redacted leaf is shown as null. The placeholder salt is never stored,
+    # hashed or returned; the commitment shown in proofs is the original one.
+    shown = [
+        Leaf(leaf.path, leaf.commitment, _DISPLAY_SALT, None) if leaf.is_redacted else leaf
+        for leaf in leaves
+    ]
     return EventView(
         seq=record.seq,
         event_id=record.event_id,
@@ -83,7 +91,9 @@ def _view(conn: Connection, record: StoredRecord) -> EventView:
         resource_id=record.resource_id,
         timestamp=record.timestamp,
         recorded_at=record.recorded_at,
-        payload=unflatten(leaves),
+        payload=unflatten(shown) if shown else {},  # no leaves: archived (payload in the archive)
+        redacted_paths=redacted,
+        archived=not leaves,
         payload_root=record.payload_root,
         content_hash=record.content_hash,
         prev_hash=record.prev_hash,

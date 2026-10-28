@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from aip.ingest import IngestValidationError
+from aip.lifecycle import SigningUnavailableError, TargetConflictError, TargetNotFoundError
 from aip.storage import (
     StorageCommitUnknownError,
     StorageError,
@@ -83,6 +84,18 @@ def install_error_handlers(app: FastAPI) -> None:
             "Database busy; nothing was written; retry later",
             headers={"Retry-After": "1"},
         )
+
+    @app.exception_handler(TargetNotFoundError)
+    async def _not_found(request: Request, exc: TargetNotFoundError) -> JSONResponse:
+        return problem(request, 404, "not_found", "event not found")
+
+    @app.exception_handler(TargetConflictError)
+    async def _conflict(request: Request, exc: TargetConflictError) -> JSONResponse:
+        return problem(request, 409, "conflict", str(exc))  # fixed texts, never values
+
+    @app.exception_handler(SigningUnavailableError)
+    async def _no_signer(request: Request, exc: SigningUnavailableError) -> JSONResponse:
+        return problem(request, 503, "service_unavailable", "signing key not configured")
 
     @app.exception_handler(StorageCommitUnknownError)
     async def _unknown(request: Request, exc: StorageCommitUnknownError) -> JSONResponse:

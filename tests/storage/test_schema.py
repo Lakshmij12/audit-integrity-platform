@@ -97,7 +97,7 @@ def test_reopen_existing_database(database: Database, db_path: Path) -> None:
 @pytest.mark.parametrize(
     "tamper",
     [
-        "UPDATE schema_meta SET value = '2' WHERE key = 'schema_version'",
+        "UPDATE schema_meta SET value = '3' WHERE key = 'schema_version'",
         "DROP TRIGGER audit_records_no_update",
         "DROP TRIGGER payload_leaves_no_delete",
         "DROP INDEX ix_records_actor",

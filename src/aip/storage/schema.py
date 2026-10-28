@@ -1,9 +1,17 @@
-"""SQLite schema v1: explicit DDL, STRICT tables, append-only guard triggers.
+"""SQLite schema: explicit DDL, STRICT tables, guard triggers, and the v1 -> v2 migration.
 
-The guard triggers block every UPDATE and DELETE. They catch application bugs only (anyone with
-file access can drop them); tamper detection relies on the hash chain. Redaction and retention will
-need narrowly scoped changes to these triggers, introduced by a controlled schema migration
-(schema_version 2), not by editing this version.
+Version 1 (``DDL``, unchanged) blocks every UPDATE and DELETE. Version 2 (``V2_TRIGGERS``) keeps the
+trigger names but narrows three of them so that exactly two mutations become possible:
+
+* redaction: a leaf UPDATE that removes value and salt and changes nothing else (commitment, path
+  and seq kept), only for a non-archived, non-``SYSTEM_*`` record;
+* archival: a record UPDATE that only sets ``archived_at``/``archive_run_id`` on a non-archived,
+  non-``SYSTEM_*`` record, then a DELETE of that record's leaves.
+
+Records can never be deleted. The triggers catch application bugs only (anyone with file access can
+drop them); tamper detection relies on the hash chain and on signed authorizations (verify/).
+Every database is created as v1 and migrated to v2 inside the same ``BEGIN IMMEDIATE`` transaction,
+so new and upgraded files take the same path and a failed migration leaves v1 untouched.
 """
 
 from typing import Final
@@ -13,7 +21,7 @@ from sqlalchemy import Connection, text
 from aip.crypto.hashing import GENESIS_HASH, HASH_VERSION
 from aip.storage.errors import StorageIntegrityError
 
-SCHEMA_VERSION: Final = 1
+SCHEMA_VERSION: Final = 2
 MIN_SQLITE_VERSION: Final = (3, 37, 0)  # STRICT tables
 
 _HEX64 = "length({c}) = 64 AND {c} NOT GLOB '*[^0-9a-f]*'"
@@ -65,6 +73,36 @@ DDL: Final[tuple[str, ...]] = (
        BEGIN SELECT RAISE(ABORT, 'payload_leaves is append-only'); END""",
 )
 
+_SAME = " AND ".join(
+    f"NEW.{c} IS OLD.{c}"
+    for c in (
+        "seq", "event_id", "event_type", "actor_id", "resource_type", "resource_id", "timestamp",
+        "recorded_at", "payload_root", "content_hash", "prev_hash", "record_hash", "hash_version",
+    )
+)  # fmt: skip
+
+V2_TRIGGERS: Final[dict[str, str]] = {
+    "audit_records_no_update": f"""CREATE TRIGGER audit_records_no_update
+       BEFORE UPDATE ON audit_records
+       WHEN NOT (OLD.archived_at IS NULL AND NEW.archived_at IS NOT NULL
+                 AND NEW.archive_run_id IS NOT NULL AND OLD.event_type NOT GLOB 'SYSTEM_*'
+                 AND {_SAME})
+       BEGIN SELECT RAISE(ABORT, 'audit_records is append-only (archive marking only)'); END""",
+    "payload_leaves_no_update": """CREATE TRIGGER payload_leaves_no_update
+       BEFORE UPDATE ON payload_leaves
+       WHEN NOT (OLD.salt IS NOT NULL AND NEW.salt IS NULL AND NEW.value IS NULL
+                 AND NEW.seq IS OLD.seq AND NEW.path IS OLD.path
+                 AND NEW.commitment IS OLD.commitment
+                 AND EXISTS (SELECT 1 FROM audit_records r WHERE r.seq = OLD.seq
+                             AND r.archived_at IS NULL AND r.event_type NOT GLOB 'SYSTEM_*'))
+       BEGIN SELECT RAISE(ABORT, 'payload_leaves is append-only (redaction only)'); END""",
+    "payload_leaves_no_delete": """CREATE TRIGGER payload_leaves_no_delete
+       BEFORE DELETE ON payload_leaves
+       WHEN NOT EXISTS (SELECT 1 FROM audit_records r WHERE r.seq = OLD.seq
+                        AND r.archived_at IS NOT NULL)
+       BEGIN SELECT RAISE(ABORT, 'payload_leaves is append-only (archived records only)'); END""",
+}
+
 EXPECTED_OBJECTS: Final = frozenset(
     {
         ("table", "schema_meta"),
@@ -91,22 +129,37 @@ def _user_objects(conn: Connection) -> set[tuple[str, str]]:
 
 
 def ensure_schema(conn: Connection) -> None:
-    """Create schema v1 in an empty database, or check an existing one. Call inside a write
-    transaction so concurrent first-time openers are serialized."""
+    """Create schema v1 in an empty database and migrate it to v2, migrate an existing v1 file,
+    or check an existing v2 file. Call inside a write transaction: concurrent openers are
+    serialized and a failed migration rolls back completely."""
     present = _user_objects(conn)
     if not present:
         for statement in DDL:
             conn.execute(text(statement))
         conn.execute(
-            text("INSERT INTO schema_meta (key, value) VALUES ('schema_version', :v)"),
-            {"v": str(SCHEMA_VERSION)},
+            text("INSERT INTO schema_meta (key, value) VALUES ('schema_version', '1')"),
         )
-        return
+    if _version(conn) == "1":
+        _check_objects(conn)
+        migrate_v1_to_v2(conn)
     check_schema(conn)
 
 
-def check_schema(conn: Connection) -> None:
-    """Fail closed unless the database holds exactly schema v1, its STRICT tables and triggers."""
+def migrate_v1_to_v2(conn: Connection) -> None:
+    """Replace the three v1 guard triggers by their narrowly scoped v2 versions."""
+    for name, statement in V2_TRIGGERS.items():
+        conn.execute(text(f"DROP TRIGGER {name}"))
+        conn.execute(text(statement))
+    conn.execute(text("UPDATE schema_meta SET value = '2' WHERE key = 'schema_version'"))
+
+
+def _version(conn: Connection) -> object:
+    return conn.execute(
+        text("SELECT value FROM schema_meta WHERE key = 'schema_version'")
+    ).scalar_one_or_none()
+
+
+def _check_objects(conn: Connection) -> None:
     present = _user_objects(conn)
     missing = EXPECTED_OBJECTS - present
     unexpected = present - EXPECTED_OBJECTS
@@ -114,11 +167,28 @@ def check_schema(conn: Connection) -> None:
         raise StorageIntegrityError(
             f"unexpected schema: missing {sorted(missing)}, unexpected {sorted(unexpected)}"
         )
-    version = conn.execute(
-        text("SELECT value FROM schema_meta WHERE key = 'schema_version'")
-    ).scalar_one_or_none()
+
+
+def _normalized(sql: object) -> str:
+    return " ".join(str(sql).split())
+
+
+def check_schema(conn: Connection) -> None:
+    """Fail closed unless the database holds exactly schema v2: its objects, STRICT tables and the
+    v2 trigger definitions (a v1 trigger under a v2 version number is rejected)."""
+    _check_objects(conn)
+    version = _version(conn)
     if version != str(SCHEMA_VERSION):
         raise StorageIntegrityError(f"schema_version is {version!r}, expected {SCHEMA_VERSION}")
+    rows = conn.execute(text("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'")).all()
+    stored: dict[object, object] = {row[0]: row[1] for row in rows}
+    changed = sorted(
+        name
+        for name, sql in V2_TRIGGERS.items()
+        if _normalized(stored.get(name)) != _normalized(sql)
+    )
+    if changed:
+        raise StorageIntegrityError(f"guard triggers differ from schema v2: {changed}")
     strict = {str(row[1]): int(row[5]) for row in conn.execute(text("PRAGMA table_list")).all()}
     not_strict = [name for name in STRICT_TABLES if strict.get(name) != 1]
     if not_strict:

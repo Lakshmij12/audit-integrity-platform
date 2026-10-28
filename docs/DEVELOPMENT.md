@@ -175,6 +175,23 @@ newest record: plain verification still passes, and verification against a signe
 earlier reports `TRUNCATED`. Exit code 0 means every step behaved as expected; the script also runs as a
 test (`tests/verify/test_tamper_demo.py`).
 
+## Redaction and retention (commit 9)
+Both need an admin key and a signing key (`AIP_SIGNING_KEY_PATH`). Settings are
+`AIP_RETENTION_WINDOW_DAYS` (default 365) and `AIP_ARCHIVE_DIR` (default `archives`, git-ignored;
+archives hold plaintext payloads).
+```powershell
+$h = @{ "X-API-Key" = "<admin key>" }
+$base = "http://127.0.0.1:8000/audit"
+$redact = '{"paths": [["ssn"]], "reason": "client privacy request"}'
+Invoke-RestMethod -Method Post -Uri "$base/events/<eventId>/redactions" -Headers $h -ContentType application/json -Body $redact
+Invoke-RestMethod -Method Post -Uri "$base/retention/runs" -Headers $h    # dry run (default)
+Invoke-RestMethod -Method Post -Uri "$base/retention/runs" -Headers $h -ContentType application/json -Body '{"dryRun": false}'
+```
+`GET /audit/verify` then reports `authorized.redactedLeaves` and `authorized.archivedRecords`. If the
+signing key is missing it reports `INDETERMINATE`, and if an archive file has been moved away it reports
+`unverified.archivedContentUnavailable`. A database created by commits 6–8 (schema v1) is migrated to v2
+the first time it is opened.
+
 ## Quality gates
 ```powershell
 .\.venv\Scripts\python.exe -m ruff check .
@@ -249,6 +266,16 @@ not re-run):
 | `ruff format --check .` | 0 | `63 files already formatted` |
 | `mypy` (strict, `warn_unreachable`) | 0 | `Success: no issues found in 55 source files` |
 | `pytest -W error --cov=aip --cov-branch` | 0 | `533 passed` (478 existing + 55 verification, signing and API); 96% overall; `routes_verify.py` 100%, `verify/service.py` 96%, `crypto/signing.py` 95% |
+| `scripts/tamper_demo.py` | 0 | `RESULT: all steps behaved as expected` |
+
+Commit 9 (redaction, retention, schema v2; no dependency changes, so pip-audit was not re-run):
+
+| Gate | Exit code | Output |
+|------|-----------|--------|
+| `ruff check .` | 0 | `All checks passed!` |
+| `ruff format --check .` | 0 | `73 files already formatted` |
+| `mypy` (strict, `warn_unreachable`) | 0 | `Success: no issues found in 65 source files` |
+| `pytest -W error --cov=aip --cov-branch` | 0 | `612 passed` (533 existing, 5 of them updated for the new rules, + 79 lifecycle, migration and API); 96% overall; `lifecycle/service.py` 99%, `lifecycle/archive.py` 96%, `routes_lifecycle.py` 100%, `verify/service.py` 93%, `storage/schema.py` 97% |
 | `scripts/tamper_demo.py` | 0 | `RESULT: all steps behaved as expected` |
 
 `poc/` is excluded from Ruff: it holds the redaction spike exactly as run and recorded in commit 3.

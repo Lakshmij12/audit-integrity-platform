@@ -68,7 +68,12 @@ def test_verify_reports_an_intact_chain(api: TestClient) -> None:
     assert (body["recordsChecked"], body["headSeq"]) == (4, 4)
     assert body["firstInconsistency"] is None
     assert body["anchor"] is None
-    assert body["unverified"] == {"redactedLeaves": 0, "archivedRecords": 0}
+    assert body["unverified"] == {
+        "redactedLeaves": 0,
+        "archivedRecords": 0,
+        "archivedContentUnavailable": 0,
+    }
+    assert body["authorized"] == {"redactedLeaves": 0, "archivedRecords": 0}
     assert any("trusted anchor" in note for note in body["notes"])
 
 
@@ -108,20 +113,19 @@ def test_deleted_record_is_reported(api: TestClient, api_db: Path) -> None:
     assert (problem["violationType"], problem["seq"]) == ("SEQUENCE_GAP", 2)
 
 
-def test_unverifiable_redacted_leaf_is_indeterminate_not_intact(
-    api: TestClient, api_db: Path
-) -> None:
-    """A nulled value and salt looks like a redaction; until authorizations are checked it may
-    equally be hiding an edit, so the API reports neither intact nor tampered."""
+def test_unauthorized_redaction_is_tampered(api: TestClient, api_db: Path) -> None:
+    """A nulled value and salt without a signed SYSTEM_REDACTION authorization is unauthorized
+    data removal, never a valid redaction."""
     _write(api, 3)
     _tamper(
         api_db,
         "UPDATE payload_leaves SET salt = NULL, value = NULL WHERE seq = 2 AND path = '[\"ssn\"]'",
     )
     body = _verify(api)
-    assert (body["status"], body["intact"]) == ("INDETERMINATE", None)
-    assert body["firstInconsistency"] is None
-    assert body["unverified"] == {"redactedLeaves": 1, "archivedRecords": 0}
+    assert (body["status"], body["intact"]) == ("TAMPERED", False)
+    problem = body["firstInconsistency"]
+    assert (problem["violationType"], problem["seq"]) == ("UNAUTHORIZED_REDACTION", 2)
+    assert problem["leafPath"] == ["ssn"]
 
 
 @pytest.mark.parametrize(

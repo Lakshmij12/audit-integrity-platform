@@ -198,7 +198,7 @@ def test_malformed_rows_are_reported_without_their_values(
     _assert_no_values(report, "SECRET-VALUE", SENSITIVE)
 
 
-def test_redacted_leaf_is_counted_as_unverified_not_tampered(
+def test_redaction_without_authorization_is_unauthorized(
     service: IngestService, database: Database, db_path: Path, clock: FakeClock
 ) -> None:
     _seed(service, clock)
@@ -207,13 +207,12 @@ def test_redacted_leaf_is_counted_as_unverified_not_tampered(
         "UPDATE payload_leaves SET salt = NULL, value = NULL WHERE seq = 2 AND path = '[\"ssn\"]'",
     )
     report = verify_database(database)
-    assert report.intact is True
-    assert report.status is VerifyStatus.INDETERMINATE
-    assert report.redacted_leaves_unverified == 1
-    assert any("not implemented" in note for note in report.notes)
+    assert report.status is VerifyStatus.TAMPERED
+    assert _problem(report) == (Violation.UNAUTHORIZED_REDACTION, 2, "payload", ["ssn"])
+    _assert_no_values(report, SENSITIVE)
 
 
-def test_archived_record_is_counted_as_unverified_not_tampered(
+def test_archival_without_a_signed_run_is_invalid(
     service: IngestService, database: Database, db_path: Path, clock: FakeClock
 ) -> None:
     _seed(service, clock)
@@ -224,9 +223,8 @@ def test_archived_record_is_counted_as_unverified_not_tampered(
         "archive_run_id = 'run-1' WHERE seq = 1",
     )
     report = verify_database(database)
-    assert report.intact is True
-    assert report.status is VerifyStatus.INDETERMINATE
-    assert report.archived_records_unverified == 1
+    assert report.status is VerifyStatus.TAMPERED
+    assert _problem(report) == (Violation.INVALID_ARCHIVE, 1, "archive", None)
 
 
 def _rewrite_from(database: Database, db_path: Path, seq: int, new_value: int) -> None:

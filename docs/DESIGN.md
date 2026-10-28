@@ -164,7 +164,8 @@ deleted or added leaf), then C3. It stops at the first violation.
   `INDETERMINATE` (no violation, but some redacted leaves or archived rows could not be checked).
   `intact` is `true`, `false` or `null` respectively. Redacted leaves and archived rows are counted in
   `unverified`, never reported as tampering, and never as verified: someone with file access could fake
-  either state to hide an edit. C6–C8 arrive with commit 9 and will turn them into checked states.
+  either state to hide an edit. Superseded in commit 9 (§6.1, §7.2): both states are now checked
+  against signed authorizations, and INDETERMINATE remains only for evidence that cannot be checked.
 - **No values in reports.** `firstInconsistency {seq, violationType, eventId, field, leafPath, expected,
   actual}`. `expected` and `actual` are only ever a well-formed hash or a `seq` number; anything else is
   replaced by `null`. Payload values, salts and keys never appear. `leafPath` names the payload key path
@@ -218,6 +219,49 @@ Steps 3–5 are one transaction, so there is no internal window between redactio
 - Compromise of the host-stored signing key allows forged authorizations (L4).
 - `SYSTEM_*` events are exempt from redaction and retention so authorizations cannot be removed by policy.
 
+### 6.1 As implemented in commit 9
+- **Schema v2** (`storage/schema.py`). It is applied automatically at open, inside the same
+  `BEGIN IMMEDIATE` transaction that checks the schema. Every file, new or v1, takes the same v1→v2
+  path, and a failed migration rolls back and leaves v1 intact. The three guard triggers keep their
+  names, and each gains a `WHEN` clause that allows exactly one shape of change:
+  - **Leaf UPDATE:** `salt` and `value` become NULL, while `seq`, `path` and `commitment` stay as they
+    were. Allowed only for a non-archived, non-`SYSTEM_*` record.
+  - **Record UPDATE:** sets only `archived_at`/`archive_run_id`, and only from NULL, on a non-`SYSTEM_*`
+    record. Every other column must stay the same.
+  - **Leaf DELETE:** only for an archived record.
+
+  Records can never be deleted. `check_schema` also compares the stored trigger SQL, so a v1 trigger
+  under a v2 version number fails closed.
+- **Authorization** `A = {t:"aip.redaction", v:1, targetSeq, targetEventId, targetContentHash, paths,
+  reason, requestedBy, requestedAt, keyId}`.
+  - `paths` are typed paths, sorted and deduplicated; already-redacted paths are left out.
+  - `requestedBy` is the admin API key's 8-hex id.
+  - The Ed25519 signature covers `canon(A)`. The `t` tag keeps a redaction signature from being replayed
+    as a checkpoint or retention run.
+
+  The `SYSTEM_REDACTION` event has `actorId = "apikey:<id>"`, `resourceType = AUDIT_RECORD`,
+  `resourceId` set to the target eventId, and payload `{authorization: A, signature}`. Its own leaves
+  are committed and chained like any other record.
+- **One transaction.** Validate, sign, append the `SYSTEM_REDACTION` event, then null the values and
+  salts. Commitments, `payloadRoot`, `contentHash` and `recordHash` are never recomputed. After COMMIT,
+  a best-effort `wal_checkpoint(TRUNCATE)` runs. The plan's step 5 (append a checkpoint) is dropped:
+  checkpoints are held outside the database (§4.1).
+- **C6 in the verifier.** A leaf without a value is accepted only if a `SYSTEM_REDACTION` event with a
+  higher `seq` lists that exact path for that `targetSeq` and its `targetEventId` and
+  `targetContentHash` match the record. Its signature must also verify under a key passed to the
+  verifier. That key comes from configuration (the service's own signing key), never from the database.
+  - **Signed by a key not trusted here** (for example, no key configured): `INDETERMINATE`.
+  - **Missing, altered or forged authorization:** `UNAUTHORIZED_REDACTION` at the target. A `SYSTEM_*`
+    event whose authorization is malformed or fails its signature is also reported, as
+    `INVALID_AUTHORIZATION`.
+- **API.**
+  - `POST /audit/events/{eventId}/redactions` takes `{"paths": [["ssn"], ["tags", 0]], "reason": "..."}`
+    and is admin only.
+  - It returns 201, or 200 as a no-op when every path was already redacted.
+  - Errors: 404 for an unknown event; 409 for a `SYSTEM_*` or archived target; 422 for an unknown or
+    container path or a bad body; 503 without a signing key.
+  - Reads show a redacted leaf as `null` and list it in `redactedPaths`.
+
 ## 7. Retention and archive
 1. Select rows with `recordedAt < cutoff` (`cutoff = now − windowDays`), excluding `SYSTEM_*` events and already-archived rows.
 2. Write `archives/<runId>.json` (full records: envelope, leaves with values, salts and commitments), fsync, compute its SHA-256.
@@ -248,6 +292,52 @@ Not in committed scope; to be decided by the engineer at the retention milestone
   caveats); production key custody would need KMS.
 - **Estimated cost:** about half a day including tests.
 
+### 7.2 As implemented in commit 9
+- **Endpoint.** `POST /audit/retention/runs` is admin only. It is a dry run by default: an empty body or
+  `{"dryRun": true}` reports the count and seq range and changes nothing. `{"dryRun": false}` archives
+  (201).
+- **Settings.** `AIP_RETENTION_WINDOW_DAYS` (default 365) and `AIP_ARCHIVE_DIR` (default `archives/`,
+  git-ignored). A run archives at most 10,000 records; the rest are left for the next run.
+- **Order inside one `BEGIN IMMEDIATE` transaction:**
+  1. Select the candidates.
+  2. Write `<runId>.json` to `<name>.tmp` (exclusive create), fsync, then rename it into place.
+  3. Sign `R = {t:"aip.retention", v:1, runId, cutoff, windowDays, fromSeq, toSeq, recordCount,
+     archiveFile, archiveSha256, archivedAt, requestedBy, keyId}`.
+  4. Append `SYSTEM_RETENTION_RUN`.
+  5. Mark the rows archived (`archived_at = archivedAt`), then delete their leaves.
+  6. COMMIT, then a best-effort WAL checkpoint.
+
+  The archive file always exists, complete, before the database can reference it.
+- **Failure and recovery:**
+  - **Any error before COMMIT:** the transaction rolls back and the new file is deleted.
+  - **COMMIT outcome unknown** (`commit_outcome_unknown`): the file is kept, because the database may
+    reference it.
+  - **Crash between rename and COMMIT:** leaves an orphan file. A file whose `runId` has no
+    `SYSTEM_RETENTION_RUN` event is safe to delete; verification never reads it.
+- **C7.** An archived row is valid only when all of the following hold:
+  - A `SYSTEM_RETENTION_RUN` with a higher `seq` has that `runId`.
+  - Its signature verifies.
+  - `fromSeq ≤ seq ≤ toSeq`.
+  - The row's `recordedAt` is earlier than the signed `cutoff`.
+  - `archived_at` equals the signed `archivedAt`.
+  - The row is not a `SYSTEM_*` event.
+  - No leaves remain in the database.
+
+  Otherwise the result is `INVALID_ARCHIVE`.
+- **C8.** When the archive file is available:
+  - its SHA-256 must equal the signed `archiveSha256`
+  - the record must be in it
+  - each revealed leaf must recompute its commitment
+  - each redacted leaf must have its own C6 authorization
+  - the leaves must recompute the stored `payloadRoot`
+
+  Otherwise the result is `ARCHIVE_CONTENT_MISMATCH`.
+- **Archive file unavailable:** the run's signature is verified but the content is not. The status is
+  `INDETERMINATE`, never `VERIFIED` and never `TAMPERED`. A run signed by an untrusted key is also
+  `INDETERMINATE`.
+- **Reads:** an archived event shows `"archived": true` and an empty payload; the payload lives in the
+  archive file.
+
 ## 8. Export bundle (`GET /audit/export?actorId=` or `?resourceId=`)
 Contents: `records.jsonl` (matching records, redactions applied; archived matches as stubs with `runId`),
 `skeleton.jsonl` (`seq, recordedAt, prevHash, contentHash, recordHash` from the first match's predecessor
@@ -275,8 +365,9 @@ file digests, `"completeness": "signer-asserted"`) with an Ed25519 signature.
 ## 10. Direct database tampering tests
 Status after commit 8: implemented for the record, leaf, deletion, rewrite and truncation rows below
 (`tests/verify/test_verify_service.py`, `tests/api/test_verify_api.py`, `scripts/tamper_demo.py`).
-The redaction and archive rows currently give `INDETERMINATE` instead of `UNAUTHORIZED_REDACTION` and
-`INVALID_ARCHIVE`; they arrive with commit 9. Checkpoints are held by the caller rather than in the
+Commit 9 adds the redaction and archive rows (`tests/lifecycle/`, `tests/api/test_lifecycle_api.py`):
+unauthorized blanking gives `UNAUTHORIZED_REDACTION`, archive marking without a valid run gives
+`INVALID_ARCHIVE`, and an altered archive file gives `ARCHIVE_CONTENT_MISMATCH`. Checkpoints are held by the caller rather than in the
 database, so the rewrite rows are tested with and without an anchor passed to `GET /audit/verify`.
 
 Purpose: prove that `GET /audit/verify` detects unauthorized modification **by recomputing hashes**,

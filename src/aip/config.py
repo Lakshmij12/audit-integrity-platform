@@ -17,3 +17,7 @@ class Settings(BaseSettings):
     # Ed25519 private key (PEM) for signed checkpoints; create with `python -m aip.cli
     # new-signing-key`. Optional: without it, verification works but checkpoints return 503.
     signing_key_path: str | None = None
+    # Retention: records whose recordedAt is older than this many days can be archived.
+    retention_window_days: int = Field(default=365, ge=1)
+    # Archive files written by retention runs (plaintext payloads; keep access restricted).
+    archive_dir: str = "archives"

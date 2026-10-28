@@ -22,6 +22,7 @@ KEYS = {
 def make_settings(db_path: Path, **overrides: Any) -> Settings:
     values: dict[str, Any] = {
         "db_path": str(db_path),
+        "archive_dir": str(db_path.parent / "archives"),
         "busy_timeout_ms": 500,
         "api_keys": ",".join(f"{role}:{hash_api_key(key)}" for role, key in KEYS.items()),
     }

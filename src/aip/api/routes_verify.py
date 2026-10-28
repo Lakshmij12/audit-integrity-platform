@@ -1,5 +1,6 @@
 """GET /audit/verify and GET /audit/checkpoints/latest."""
 
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -8,6 +9,7 @@ from starlette.concurrency import run_in_threadpool
 from aip.api.auth import Principal, require_reader
 from aip.api.schemas import (
     AnchorView,
+    AuthorizedView,
     CheckpointResponse,
     InconsistencyView,
     UnverifiedView,
@@ -17,7 +19,6 @@ from aip.crypto.hashing import is_hex_digest
 from aip.crypto.signing import Signer, public_key_hex, sign_checkpoint
 from aip.crypto.timestamps import format_timestamp
 from aip.ingest import Clock, IngestValidationError, Issue
-from aip.storage import Database
 from aip.verify import Anchor, VerifyReport, VerifyStatus, verify_database
 
 router = APIRouter(prefix="/audit", tags=["verification"])
@@ -50,9 +51,14 @@ def _to_response(report: VerifyReport) -> VerifyResponse:
             record_hash=report.anchor.record_hash,
             matched=report.anchor_matched,
         ),
+        authorized=AuthorizedView(
+            redacted_leaves=report.redacted_leaves_authorized,
+            archived_records=report.archived_records_verified,
+        ),
         unverified=UnverifiedView(
             redacted_leaves=report.redacted_leaves_unverified,
             archived_records=report.archived_records_unverified,
+            archived_content_unavailable=report.archived_content_unavailable,
         ),
         notes=report.notes,
     )
@@ -74,9 +80,19 @@ async def verify(
         if not is_hex_digest(anchor_hash):
             raise IngestValidationError([Issue("anchorHash", "not_a_hex_digest")])
         anchor = Anchor(anchor_seq, anchor_hash)
-    database: Database = request.app.state.database
-    report = await run_in_threadpool(verify_database, database, anchor=anchor)
+    report = await run_in_threadpool(_verify_app, request, anchor)
     return _to_response(report)
+
+
+def _verify_app(request: Request, anchor: Anchor | None = None) -> VerifyReport:
+    """Verify with this service's trusted key (from configuration) and archive directory."""
+    signer: Signer | None = request.app.state.signer
+    return verify_database(
+        request.app.state.database,
+        anchor=anchor,
+        trusted_keys={} if signer is None else {signer.key_id: signer.public_key},
+        archive_dir=Path(request.app.state.settings.archive_dir),
+    )
 
 
 @router.get(
@@ -94,8 +110,7 @@ def latest_checkpoint(
     signer: Signer | None = request.app.state.signer
     if signer is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "signing key not configured")
-    database: Database = request.app.state.database
-    report = verify_database(database)
+    report = _verify_app(request)
     if not report.intact:
         raise HTTPException(status.HTTP_409_CONFLICT, "the chain failed verification; not signed")
     if report.head_seq == 0:
