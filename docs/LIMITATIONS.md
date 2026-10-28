@@ -158,3 +158,30 @@ here is claimed to be complete.
     results are ordered by `seq`. Equality filters are exact matches; there is no full-text search.
 50. **Logging is minimal**: one JSON access line per request and error events without messages or
     tracebacks (to avoid leaking data), so diagnosing unexpected errors relies on the request ID.
+
+## Verification and signing (implemented in commit 8)
+51. **Without an anchor, verification proves internal consistency only (L1).** Someone with write
+    access to the database file can edit a record and recompute every later hash, or delete the newest
+    records. `GET /audit/verify` then reports `VERIFIED`. Both are detected only against a checkpoint
+    saved earlier and kept where that person cannot change it (tested both ways).
+52. **The verifier trusts the anchor it is given.** `anchorSeq`/`anchorHash` are plain values; checking
+    the checkpoint's signature against a trusted public key is the caller's job
+    (`verify_checkpoint`). The response's `publicKey` is a convenience: trust must come from a key
+    obtained out of band, not from the same response.
+53. **Checkpoints are not stored or scheduled by the service.** Each call signs the current head; there
+    is no checkpoint history, publication, or periodic signing. Records appended after the latest
+    externally held checkpoint can be truncated or rewritten without detection, and a well-formed event
+    appended at the tail is indistinguishable from a genuine one.
+54. **Signing key handling is prototype-grade.** The key is an unencrypted PKCS#8 PEM on the same host
+    (owner-only permissions on POSIX; Windows uses inherited ACLs). There is no rotation, revocation or
+    HSM; a host compromise allows forged checkpoints. `keyId` is a 64-bit fingerprint (identification,
+    not security).
+55. **Redacted and archived states are INDETERMINATE until commit 9.** Leaves without value and salt and
+    rows with `archived_at` set are counted as unverified and make the status `INDETERMINATE` (`intact:
+    null`). They are not reported as tampering, even if they were faked to hide an edit; authorizations
+    (C6–C8) will decide that.
+56. **Only the first violation is reported**, and its `leafPath` reveals the payload key path (not the
+    value) of the failing leaf.
+57. **Verification cost is a full walk per request** (O(records + leaves), one read snapshot, one leaf
+    query per record). Both `GET /audit/verify` and `GET /audit/checkpoints/latest` do this, and nothing
+    rate-limits them, so large logs need batching by range or incremental verification.

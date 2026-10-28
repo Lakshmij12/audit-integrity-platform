@@ -112,7 +112,9 @@ def install_error_handlers(app: FastAPI) -> None:
             403: "forbidden",
             404: "not_found",
             405: "method_not_allowed",
+            409: "conflict",
             415: "unsupported_media_type",
+            503: "service_unavailable",
         }
         code = codes.get(exc.status_code, "http_error")
         return problem(request, exc.status_code, code, str(exc.detail), headers=exc.headers)

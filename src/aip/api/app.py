@@ -17,8 +17,10 @@ from fastapi import FastAPI, Request, Response
 from aip.api.auth import parse_api_keys
 from aip.api.errors import install_error_handlers
 from aip.api.routes_events import router as events_router
+from aip.api.routes_verify import router as verify_router
 from aip.config import Settings
-from aip.ingest import Clock, IngestService
+from aip.crypto.signing import Signer
+from aip.ingest import Clock, IngestService, SystemClock
 from aip.storage import DatabaseConfig, open_database
 
 _STANDARD_RECORD_KEYS = frozenset(vars(logging.makeLogRecord({})))
@@ -50,6 +52,9 @@ def configure_logging() -> None:
 def create_app(settings: Settings | None = None, *, clock: Clock | None = None) -> FastAPI:
     settings = settings if settings is not None else Settings()
     api_keys = parse_api_keys(settings.api_keys)  # fail fast on malformed configuration
+    signer = (
+        Signer.from_pem_file(Path(settings.signing_key_path)) if settings.signing_key_path else None
+    )
     configure_logging()
     access_log = logging.getLogger("aip.api.access")
 
@@ -73,6 +78,8 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
     )
     app.state.settings = settings
     app.state.api_keys = api_keys
+    app.state.signer = signer
+    app.state.clock = clock if clock is not None else SystemClock()
 
     @app.middleware("http")
     async def request_context(
@@ -99,4 +106,5 @@ def create_app(settings: Settings | None = None, *, clock: Clock | None = None) 
 
     install_error_handlers(app)
     app.include_router(events_router)
+    app.include_router(verify_router)
     return app

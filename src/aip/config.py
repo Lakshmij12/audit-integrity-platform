@@ -14,3 +14,6 @@ class Settings(BaseSettings):
     # Comma-separated "role:sha256hex" entries; generate with `python -m aip.cli new-api-key`.
     api_keys: str = ""
     max_body_bytes: int = Field(default=131_072, ge=1024)  # 128 KiB raw request body
+    # Ed25519 private key (PEM) for signed checkpoints; create with `python -m aip.cli
+    # new-signing-key`. Optional: without it, verification works but checkpoints return 503.
+    signing_key_path: str | None = None

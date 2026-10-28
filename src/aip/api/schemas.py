@@ -1,6 +1,6 @@
 """Response bodies (field names follow the specification's camelCase)."""
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -37,3 +37,45 @@ class EventView(_Response):
 class EventPage(_Response):
     items: list[EventView]
     next_cursor: str | None = Field(alias="nextCursor")
+
+
+class InconsistencyView(_Response):
+    seq: int
+    violation_type: str = Field(alias="violationType")
+    event_id: str | None = Field(alias="eventId")
+    field: str | None
+    leaf_path: list[str | int] | None = Field(alias="leafPath")
+    expected: str | None
+    actual: str | None
+
+
+class AnchorView(_Response):
+    seq: int
+    record_hash: str = Field(alias="recordHash")
+    matched: bool | None
+
+
+class UnverifiedView(_Response):
+    redacted_leaves: int = Field(alias="redactedLeaves")
+    archived_records: int = Field(alias="archivedRecords")
+
+
+class VerifyResponse(_Response):
+    status: Literal["VERIFIED", "INDETERMINATE", "TAMPERED"]
+    intact: bool | None  # null when INDETERMINATE: neither confirmed intact nor tampered
+    records_checked: int = Field(alias="recordsChecked")
+    head_seq: int = Field(alias="headSeq")
+    head_record_hash: str = Field(alias="headRecordHash")
+    first_inconsistency: InconsistencyView | None = Field(alias="firstInconsistency")
+    anchor: AnchorView | None
+    unverified: UnverifiedView
+    notes: list[str]
+
+
+class CheckpointResponse(_Response):
+    seq: int
+    record_hash: str = Field(alias="recordHash")
+    signed_at: str = Field(alias="signedAt")
+    key_id: str = Field(alias="keyId")
+    signature: str
+    public_key: str = Field(alias="publicKey")

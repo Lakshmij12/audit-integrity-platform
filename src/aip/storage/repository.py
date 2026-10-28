@@ -227,6 +227,47 @@ def read_record_by_event_id(conn: Connection, event_id: str) -> StoredRecord | N
     return None if row is None else _to_record(row)
 
 
+RAW_RECORD_COLUMNS: Final = (
+    "seq, event_id, event_type, actor_id, resource_type, resource_id, timestamp, recorded_at, "
+    "payload_root, content_hash, prev_hash, record_hash, hash_version, archived_at"
+)
+
+
+def iter_raw_records(conn: Connection, *, batch_size: int = 500) -> Iterator[tuple[object, ...]]:
+    """Every audit_records row in seq order, exactly as stored and unvalidated (for verification).
+
+    Columns are RAW_RECORD_COLUMNS. Rows are read in keyset batches so memory stays bounded.
+    """
+    if type(batch_size) is not int or batch_size < 1:
+        raise ValueError("batch_size must be a positive int")
+    query = text(
+        f"SELECT {RAW_RECORD_COLUMNS} FROM audit_records "  # noqa: S608 - constant columns
+        "WHERE seq > :last ORDER BY seq LIMIT :limit"
+    )
+    last = 0
+    while True:
+        rows = conn.execute(query, {"last": last, "limit": batch_size}).all()
+        for row in rows:
+            yield tuple(row)
+        if len(rows) < batch_size:
+            return
+        last_seq = rows[-1][0]
+        if type(last_seq) is not int:
+            return  # STRICT typing makes this unreachable in practice; stop rather than loop
+        last = last_seq
+
+
+def load_raw_leaves(conn: Connection, seq: object) -> list[tuple[object, ...]]:
+    """(path, commitment, salt, value) rows of one record, exactly as stored and unvalidated."""
+    return [
+        tuple(row)
+        for row in conn.execute(
+            text("SELECT path, commitment, salt, value FROM payload_leaves WHERE seq = :seq"),
+            {"seq": seq},
+        ).all()
+    ]
+
+
 def iter_chain_entries(conn: Connection, *, batch_size: int = 1000) -> Iterator[ChainEntry]:
     """Stream the chain fields of every record in seq order, unvalidated, for ``check_chain``."""
     if type(batch_size) is not int or batch_size < 1:

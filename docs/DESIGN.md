@@ -152,6 +152,38 @@ The verifier recomputes every hash it can; it never trusts a stored hash or a st
 Response: `intact`, `recordsChecked`, `headSeq`, `firstInconsistency {seq, eventId, violationType, detail}`,
 `archive {archivedRecords, metadataConsistent, contentIntegrity}`, `checkpoints {checked, latestSeq}`.
 
+### 4.1 As implemented in commit 8
+`src/aip/verify/service.py` reads every row in `seq` order, in keyset batches of 500, inside one read
+snapshot. It reuses `check_chain`, `check_leaf`, `payload_root` and `content_hash` from `aip.crypto`.
+Per record, in order: C1/C2/C4/C4a, `hashVersion`, `eventId = "evt_" + recordHash[:32]`
+(`EVENT_ID_MISMATCH`), C5 for each leaf (`MALFORMED_LEAF` when a stored path or value cannot be parsed),
+the payload root recomputed from the stored leaves (`PAYLOAD_ROOT_MISMATCH`, which also catches a
+deleted or added leaf), then C3. It stops at the first violation.
+
+- **Status.** `VERIFIED` (everything was checked), `TAMPERED` (a violation was found) or
+  `INDETERMINATE` (no violation, but some redacted leaves or archived rows could not be checked).
+  `intact` is `true`, `false` or `null` respectively. Redacted leaves and archived rows are counted in
+  `unverified`, never reported as tampering, and never as verified: someone with file access could fake
+  either state to hide an edit. C6–C8 arrive with commit 9 and will turn them into checked states.
+- **No values in reports.** `firstInconsistency {seq, violationType, eventId, field, leafPath, expected,
+  actual}`. `expected` and `actual` are only ever a well-formed hash or a `seq` number; anything else is
+  replaced by `null`. Payload values, salts and keys never appear. `leafPath` names the payload key path
+  of a leaf whose commitment failed (structure, not the value).
+- **C9 (simplified).** Checkpoints are not stored in the database. `GET /audit/checkpoints/latest`
+  verifies the chain, then returns an Ed25519-signed checkpoint `{seq, recordHash, signedAt, keyId,
+  signature, publicKey}`. It refuses with 409 when verification finds a violation. The caller keeps the
+  checkpoint outside the service, checks its signature (`aip.crypto.signing.verify_checkpoint`) and
+  passes it back as `GET /audit/verify?anchorSeq=&anchorHash=`. A chain shorter than the anchor gives
+  `TRUNCATED`. A different `recordHash` at the anchor's `seq` gives `ANCHOR_MISMATCH` (the
+  `CHECKPOINT_MISMATCH` of the table above). Without an anchor the response carries a note that only
+  internal consistency (L1) was established.
+- **Signing.** Ed25519 (`cryptography`), message `canon({"t":"aip.checkpoint","v":1,seq,recordHash,
+  signedAt,keyId})`, `keyId` = first 16 hex characters of SHA-256 of the raw public key. Keys come from
+  `python -m aip.cli new-signing-key --out <file>`, which never overwrites an existing file, and are
+  loaded from `AIP_SIGNING_KEY_PATH`. Without that key, verification still works and checkpoints return
+  503.
+- **Access.** Both endpoints need an `auditor` or `admin` key; `writer` gets 403.
+
 ## 5. Guarantee levels
 | Level | Question | Established by | Not covered |
 |-------|----------|----------------|-------------|
@@ -240,7 +272,13 @@ file digests, `"completeness": "signer-asserted"`) with an Ed25519 signature.
 | Re-hashing the chain after redaction | Rejected | Destroys tamper evidence |
 | Trusting the public key embedded in a bundle | Rejected | An attacker could re-sign with their own key |
 
-## 10. Direct database tampering tests (planned, not implemented)
+## 10. Direct database tampering tests
+Status after commit 8: implemented for the record, leaf, deletion, rewrite and truncation rows below
+(`tests/verify/test_verify_service.py`, `tests/api/test_verify_api.py`, `scripts/tamper_demo.py`).
+The redaction and archive rows currently give `INDETERMINATE` instead of `UNAUTHORIZED_REDACTION` and
+`INVALID_ARCHIVE`; they arrive with commit 9. Checkpoints are held by the caller rather than in the
+database, so the rewrite rows are tested with and without an anchor passed to `GET /audit/verify`.
+
 Purpose: prove that `GET /audit/verify` detects unauthorized modification **by recomputing hashes**,
 not because the guard triggers block writes.
 

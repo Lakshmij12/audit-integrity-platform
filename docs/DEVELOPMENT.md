@@ -150,6 +150,31 @@ Smoke-tested on 2026-10-28 with the commands above against a scratch database: P
 `Location` header, filtered GET 200, a writer key on GET 403, `/docs` 200, JSON access log lines without
 API keys.
 
+## Verification, signed checkpoints and the tampering demo (commit 8)
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe -m aip.cli new-signing-key --out keys/signing.pem   # never overwrites
+$env:AIP_SIGNING_KEY_PATH = "keys/signing.pem"   # optional; without it checkpoints return 503
+```
+`keys/` and `*.pem` are git-ignored; never commit a private key. Endpoints (auditor, admin):
+- `GET /audit/verify`: `status` `VERIFIED` / `INDETERMINATE` / `TAMPERED`, `intact` `true` / `null` /
+  `false`, `firstInconsistency`, `unverified` counts, `notes`.
+- `GET /audit/verify?anchorSeq=<seq>&anchorHash=<recordHash>`: also checks against a saved checkpoint
+  (`TRUNCATED`, `ANCHOR_MISMATCH`).
+- `GET /audit/checkpoints/latest`: verifies, then signs the head. Returns 409 if the chain has a
+  violation, 404 if the log is empty, 503 without a key.
+
+Reproducible tampering demonstration (temporary directory, synthetic data, in-process API client):
+```powershell
+$env:PYTHONPATH = "src"; .\.venv\Scripts\python.exe scripts\tamper_demo.py
+```
+Part 1 writes five events, queries them, verifies (`VERIFIED`) and then changes one stored payload value
+with a raw `sqlite3` connection, after dropping the guard triggers as an attacker with file access would.
+Verifying again reports `LEAF_COMMITMENT_MISMATCH` at seq 3 without echoing the value. Part 2 deletes the
+newest record: plain verification still passes, and verification against a signed checkpoint taken
+earlier reports `TRUNCATED`. Exit code 0 means every step behaved as expected; the script also runs as a
+test (`tests/verify/test_tamper_demo.py`).
+
 ## Quality gates
 ```powershell
 .\.venv\Scripts\python.exe -m ruff check .
@@ -214,5 +239,16 @@ Commit 7 (HTTP API; no dependency changes, so pip-audit was not re-run):
 | `mypy` (strict, `warn_unreachable`) | 0 | `Success: no issues found in 46 source files` |
 | `pytest` (warnings as errors) | 0 | `478 passed` (413 existing + 65 API) |
 | Live run of the documented uvicorn command | — | see "Running the API" |
+
+Commit 8 (verification, signing, tampering demo; `cryptography` was already locked, so pip-audit was
+not re-run):
+
+| Gate | Exit code | Output |
+|------|-----------|--------|
+| `ruff check .` | 0 | `All checks passed!` |
+| `ruff format --check .` | 0 | `63 files already formatted` |
+| `mypy` (strict, `warn_unreachable`) | 0 | `Success: no issues found in 55 source files` |
+| `pytest -W error --cov=aip --cov-branch` | 0 | `533 passed` (478 existing + 55 verification, signing and API); 96% overall; `routes_verify.py` 100%, `verify/service.py` 96%, `crypto/signing.py` 95% |
+| `scripts/tamper_demo.py` | 0 | `RESULT: all steps behaved as expected` |
 
 `poc/` is excluded from Ruff: it holds the redaction spike exactly as run and recorded in commit 3.
