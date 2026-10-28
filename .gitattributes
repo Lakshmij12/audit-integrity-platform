@@ -1,0 +1,39 @@
+# Let Git detect text files and store them with LF in the repository.
+* text=auto
+
+# Source, configuration and documentation: LF in the working tree on every platform,
+# so files (and any hash test vectors read from them) are byte-identical across machines.
+*.py             text eol=lf
+*.pyi            text eol=lf
+*.toml           text eol=lf
+*.cfg            text eol=lf
+*.ini            text eol=lf
+*.json           text eol=lf
+*.jsonl          text eol=lf
+*.yml            text eol=lf
+*.yaml           text eol=lf
+*.md             text eol=lf
+*.txt            text eol=lf
+*.lock           text eol=lf
+*.sql            text eol=lf
+*.sh             text eol=lf
+.gitattributes   text eol=lf
+.gitignore       text eol=lf
+.python-version  text eol=lf
+
+# Windows-only scripts keep CRLF.
+*.ps1            text eol=crlf
+*.bat            text eol=crlf
+*.cmd            text eol=crlf
+
+# Binary formats: never convert or diff as text.
+*.png            binary
+*.jpg            binary
+*.jpeg           binary
+*.gif            binary
+*.ico            binary
+*.pdf            binary
+*.zip            binary
+*.gz             binary
+*.sqlite         binary
+*.db             binary

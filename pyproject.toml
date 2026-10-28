@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "audit-integrity-platform"
+version = "0.1.0"
+description = "Tamper-evident audit log service (interview assignment prototype)."
+readme = "README.md"
+requires-python = ">=3.14,<3.15"
+# Target: CPython 3.14. Pins are the versions a resolver dry-run selected for cp314 wheels;
+# third-party compatibility is UNVERIFIED until installation and the smoke tests pass.
+dependencies = [
+    "fastapi==0.162.0",
+    "uvicorn==0.54.0",
+    "pydantic==2.14.1",
+    "pydantic-settings==2.16.1",
+    "sqlalchemy==2.1.6",
+    "cryptography==50.0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.2.0",
+    "pytest-cov==7.1.0",
+    "httpx2==2.16.0",
+    "ruff==0.17.3",
+    "mypy==2.4.0",
+    "pip-audit==2.10.1",
+]
+# pip-tools (lock generation) is a bootstrap tool installed outside the locks;
+# see docs/DEVELOPMENT.md.
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]  # the project is not pip-installed; see docs/DEVELOPMENT.md
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+filterwarnings = ["error"]  # surface deprecations on 3.14; any ignore is added explicitly and documented
+
+[tool.coverage.run]
+source = ["src/aip"]
+branch = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = ["src", "tests"]
+# poc/ holds the redaction spike exactly as it was run and recorded in commit 3
+# (docs/poc/redaction-poc-output.md). Reformatting it would detach the code from that record,
+# so it is excluded from linting and formatting. It is not production code.
+extend-exclude = ["poc"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "PT", "N", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+plugins = ["pydantic.mypy"]
+mypy_path = "src"
+files = ["src", "tests"]
