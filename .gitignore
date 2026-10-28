@@ -218,3 +218,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- audit-integrity-platform ---
+data/
+archives/
+exports/
+keys/
+*.pem
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.claude/settings.local.json
+# Confidential assignment material must never be committed
+*.pdf
+assignment/
