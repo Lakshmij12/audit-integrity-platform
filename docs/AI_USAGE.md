@@ -34,6 +34,14 @@ traceability record; commits do not carry AI co-author trailers.
   dependency change and re-ran all gates.
 - Commit 6: planned and implemented SQLite persistence (`src/aip/storage/`) and append-only ingestion
   (`src/aip/ingest/`) with integration tests, and ran the quality gates.
+- Commits 7–11: implemented the HTTP API and API-key roles, chain verification and signed checkpoints,
+  the tamper demonstration, the schema v2 migration, authorized redaction and retention, signed export
+  with the standalone verifier, and the Scenario C report, with their tests and documentation. Each was
+  staged for review and committed only after explicit candidate approval (section 4, rows 18–22).
+- Commit 12: wrote the final documentation, validated the documented commands live, and prepared the
+  submission checks.
+- Across commits 8–11, Claude Code's own reviews found and corrected defects in its earlier output
+  (section 5). The tests also caught mistakes in its test code (section 6).
 - Commit 5: reviewed the committed design and PoC, found the JSON Pointer ambiguity in leaf
   commitments, proposed decisions U1–U9, implemented `src/aip/crypto/` and `tests/crypto/`, assembled
   hand-written known-answer preimages (digests computed by external tools), and ran the quality gates.
@@ -47,7 +55,11 @@ traceability record; commits do not carry AI co-author trailers.
   completeness, confidentiality, GitHub repository visibility and accurate AI-use documentation.
 - Reviewed the proposed first commit and recommended keeping the attestation template blank.
 
-ChatGPT's suggestions were advisory and reviewed by the candidate.
+ChatGPT's suggestions were advisory and reviewed by the candidate. ChatGPT did not run code, tests or
+tools against this repository. Its reviews were based on the plans, reports and excerpts the candidate
+shared with it, mostly Claude Code's own summaries. Its reviews are therefore not independent
+verification of the code; that verification is the test suite, the quality gates and the candidate's
+review of the staged changes.
 
 ## 3. Material shared
 | Tool | Material |
@@ -84,7 +96,8 @@ candidate.
 | 19 | 2026-10-28 | Commit 8: chain verification, Ed25519 checkpoints, tampering demo | Claude Code (a session that closed before staging, then a resumed session that first checked Git state and found commit 7 created and commit 8 unstaged): implemented `verify/service.py`, `api/routes_verify.py`, `crypto/signing.py`, the `new-signing-key` CLI, raw-row repository readers, `scripts/tamper_demo.py` and verification, signing and API tests. The resumed session's review found two gaps and fixed them: redacted/archived content was reported as `intact: true` (now `INDETERMINATE`, `intact: null`), and the checkpoint endpoint signed the stored head without verifying the chain (now verifies first, 409 on a violation) | Candidate approved the commit 8 scope (verification of commitments, roots, content and record hashes, sequence and links; safe first-violation reporting; Ed25519 and key CLI; checkpoints if time allowed; direct-SQLite demo and API test; no overclaiming without a trusted anchor; redaction/archive not misclassified; no values, salts or keys in errors). Results: see DEVELOPMENT.md "Quality gate results", commit 8. Not yet committed (status at implementation; the candidate then approved the 20 staged files and the commit, created as `75f9091843922e3377e96ca50385d3029286d4a6`) |
 | 20 | 2026-10-28 | Commit 9: authorized redaction, retention/archival, schema v2 | Claude Code: implemented the v1→v2 trigger migration, `lifecycle/` (signed SYSTEM_REDACTION and SYSTEM_RETENTION_RUN events in the same transaction as the mutation; archive files written durably before COMMIT, deleted on rollback, kept on an unknown COMMIT outcome), verifier checks C6–C8 with signature-checked authorizations, admin-only endpoints (retention dry run by default), redacted/archived read views, and 79 tests; updated 5 existing tests whose expectations the new rules intentionally change (unauthorized blanking and archive marking are now TAMPERED, not INDETERMINATE) | Candidate approved the scope and security requirements: never regenerate commitments or rewrite hashes; unauthorized removal never classified as redaction; no secure-deletion claim; legitimate archives with valid evidence not TAMPERED; documented failure and recovery for archive writes; existing API, signing and verification behaviour kept. Results: see DEVELOPMENT.md, commit 9. Not yet committed (status at implementation; the candidate then approved the 31 staged files and the commit, created as `b3f4ff2484e963cf32e283a849584ab13e1345d5`) |
 | 21 | 2026-10-28 | Commit 10: signed export and standalone verifier | Claude Code: implemented `export/bundle.py` (one canonical-JSON bundle: records, authorization events, whole-chain hash skeleton, Ed25519-signed manifest with section digests and `completeness: signer-asserted`), `GET /audit/export` (exactly one of actorId/resourceId, reader roles, verify-before-export), and `tools/verify_bundle.py`, a separate implementation of the published specs that imports nothing from `aip`; 26 tests, most running the verifier as an isolated subprocess (valid, empty, partially redacted, archived, wrong key, attacker re-signing, tampered sections, checks behind the signature, anchors, malformed input, authorization) | Candidate approved the scope: explicit out-of-band key trust (the embedded key is never trusted); a defined result for unavailable archived content (INDETERMINATE); no claim of database completeness without a trusted checkpoint; deterministic, documented format; no redacted plaintext or private keys. Results: see DEVELOPMENT.md, commit 10. Not yet committed (status at implementation; the candidate then approved the 12 staged files and the commit, created as `3ce987fa9511704a7063a6c54baa920a267920f7`) |
-| 22 | 2026-10-28 | Commit 11: Scenario C account-access report | Claude Code: re-read the Scenario C section of the brief and REQUIREMENTS C1; wrote docs/SCENARIO_C.md (clarified statement, nine ambiguities each with an assumption and a question for Product, design, implemented versus scoped-out); implemented `reports/access.py` and `GET /audit/reports/account-access` reusing `query_records` and `verify_database`, with a per-event integrity mapping (VERIFIED, INDETERMINATE, TAMPERED, UNVERIFIED); 11 tests | Candidate approved a minimal scope: no invented requirements; existing auditor/admin roles instead of a regulator role (the brief defines none); integrity status in the report. Results: see DEVELOPMENT.md, commit 11. Not yet committed |
+| 22 | 2026-10-28 | Commit 11: Scenario C account-access report | Claude Code: re-read the Scenario C section of the brief and REQUIREMENTS C1; wrote docs/SCENARIO_C.md (clarified statement, nine ambiguities each with an assumption and a question for Product, design, implemented versus scoped-out); implemented `reports/access.py` and `GET /audit/reports/account-access` reusing `query_records` and `verify_database`, with a per-event integrity mapping (VERIFIED, INDETERMINATE, TAMPERED, UNVERIFIED); 11 tests | Candidate approved a minimal scope: no invented requirements; existing auditor/admin roles instead of a regulator role (the brief defines none); integrity status in the report. Results: see DEVELOPMENT.md, commit 11. Not yet committed (status at implementation; the candidate then approved the 13 staged files and the commit, created as `a4e2a081fc96357abbda422f4bc5679155549653`) |
+| 23 | 2026-10-28 | Commit 12: final documentation and submission readiness | Claude Code: wrote README.md, ARCHITECTURE.md, TESTING.md and FINAL_SUMMARY.md; corrected the stale status in DEVELOPMENT.md; ran every README command against a live server on a scratch database; added one test that no route exposes PUT, PATCH or DELETE; scanned the repository for secrets and generated artifacts; compared the implementation with the brief | Candidate set the requirements: no invented identity or attestation, ATTESTATION.md personal fields left for the candidate, accurate disclosure of ChatGPT's role, the repository kept private. Results: see DEVELOPMENT.md, commit 12. Not yet committed |
 
 ChatGPT reviews of Claude Code's plans took place between these sessions (October 2026, including
 2026-10-28). The candidate reports that these reviews contributed to identifying several of the concerns
@@ -210,6 +223,9 @@ behind the refinements, corrections and adjustments in rows 4–6.
 - Commit 11: one PT018 (a compound assertion) was split. All 11 report tests passed on the first run.
 
 ## 7. Verification policy
+- Human review: the candidate approved every plan, every staged file set, every commit message and
+  every commit (two gates per commit); requirements and corrections the candidate gave are recorded in
+  section 4. Nothing has been pushed without separate approval.
 - Every file change, install, commit and push requires candidate approval.
 - Test and tool results are recorded only from actual runs.
 - ChatGPT's suggestions are advisory; repository implementation is done with Claude Code and reviewed by

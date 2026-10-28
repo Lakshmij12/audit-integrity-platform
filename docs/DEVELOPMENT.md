@@ -1,17 +1,17 @@
 # Development Setup
 
-Status: tooling, the pure cryptographic foundations (`src/aip/crypto/`, commit 5), and SQLite
-persistence with append-only ingestion as a service layer (`src/aip/storage/`, `src/aip/ingest/`,
-commit 6). The HTTP API, verification endpoint, redaction, retention, archive, export and signing are
-not implemented yet.
+Status (commit 12): complete. Implemented: the HTTP API, chain verification, signed checkpoints,
+redaction, retention and archive, signed export with a standalone verifier, and the Scenario C report
+(README.md lists them all). The sections below were written as each commit landed. Their headings name
+the commit, and any "not implemented yet" remark refers to that point in time.
 
 Target interpreter: CPython 3.14 (developed with 3.14.3 on Windows 10).
 
 Verified on 2026-10-28 (Windows 10, CPython 3.14.3, pip 25.3): both locks resolve in hash-checking
 mode, `requirements-dev.lock` installs with `--require-hashes`, `pip check` reports no broken
 requirements, and the seven runtime/tooling smoke tests pass with warnings treated as errors (see
-"Quality gate results"). This verifies the toolchain only; the audit log service is not implemented.
-Linux installation is **unverified** (see "Platform limitations").
+"Quality gate results"). That check covered the toolchain only (commit 4); later commits record their
+own results below. Linux installation is **unverified** (see "Platform limitations").
 
 ## Prerequisites
 - CPython 3.14
@@ -318,5 +318,16 @@ Commit 11 (Scenario C account-access report; no dependency changes, so pip-audit
 | `ruff format --check .` | 0 | `84 files already formatted` |
 | `mypy` (strict, `warn_unreachable`) | 0 | `Success: no issues found in 75 source files` |
 | `pytest -W error --cov=aip --cov-branch` | 0 | `649 passed` (638 existing + 11 report); 96% overall; `reports/access.py` 91%, `routes_reports.py` 95% |
+
+Commit 12 (documentation and submission readiness; one test added; no dependency changes):
+
+| Gate | Exit code | Output |
+|------|-----------|--------|
+| `ruff check .` | 0 | `All checks passed!` |
+| `ruff format --check .` | 0 | `87 files already formatted` (Ruff also counts the new Markdown files) |
+| `mypy` (strict, `warn_unreachable`) | 0 | `Success: no issues found in 75 source files` |
+| `pytest -W error --cov=aip --cov-branch` | 0 | `650 passed` (649 existing + 1 route-inventory test); 96% overall |
+| `scripts/tamper_demo.py` | 0 | `RESULT: all steps behaved as expected` |
+| Live run of every README command (uvicorn on a scratch database) | — | Ingest, query, verify (VERIFIED), redact, retention dry run and real run, export, account-access report, checkpoint; `tools/verify_bundle.py` exit 0, also with `--anchor-*`; no API key in the server log |
 
 `poc/` is excluded from Ruff: it holds the redaction spike exactly as run and recorded in commit 3.

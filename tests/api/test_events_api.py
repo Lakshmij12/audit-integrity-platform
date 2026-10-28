@@ -312,3 +312,10 @@ def test_openapi_documents_the_endpoints(api: TestClient) -> None:
     assert "post" in paths["/audit/events"]
     assert "put" not in paths["/audit/events"]
     assert "delete" not in paths["/audit/events/{event_id}"]
+
+
+def test_no_route_updates_or_deletes_records(api: TestClient) -> None:
+    """Append-only (assignment Scenario A): no PUT, PATCH or DELETE anywhere in the API."""
+    paths = api.get("/openapi.json").json()["paths"]
+    methods = {method for operations in paths.values() for method in operations}
+    assert methods == {"get", "post"}
