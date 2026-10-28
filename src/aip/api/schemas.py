@@ -87,6 +87,56 @@ class RetentionRequest(BaseModel):
     dry_run: bool = Field(default=True, alias="dryRun")
 
 
+class ReportScopeView(_Response):
+    resource_type: str = Field(alias="resourceType")
+    account_id: str | None = Field(alias="accountId")
+    actor_id: str | None = Field(alias="actorId")
+    event_type: str | None = Field(alias="eventType")
+    from_: str | None = Field(alias="from")
+    to: str | None
+
+
+class ReportIntegrityView(_Response):
+    status: Literal["VERIFIED", "INDETERMINATE", "TAMPERED"]
+    records_checked: int = Field(alias="recordsChecked")
+    head_seq: int = Field(alias="headSeq")
+    first_inconsistency_seq: int | None = Field(alias="firstInconsistencySeq")
+    violation_type: str | None = Field(alias="violationType")
+    notes: list[str]
+
+
+class AccessSummaryView(_Response):
+    total_events: int = Field(alias="totalEvents")
+    accounts: list[str]
+    by_event_type: dict[str, int] = Field(alias="byEventType")
+    by_actor: dict[str, int] = Field(alias="byActor")
+    first_timestamp: str | None = Field(alias="firstTimestamp")
+    last_timestamp: str | None = Field(alias="lastTimestamp")
+    events_not_verified: int = Field(alias="eventsNotVerified")
+
+
+class AccessEventView(_Response):
+    seq: int
+    event_id: str = Field(alias="eventId")
+    event_type: str = Field(alias="eventType")
+    actor_id: str = Field(alias="actorId")
+    account_id: str = Field(alias="accountId")
+    timestamp: str
+    recorded_at: str = Field(alias="recordedAt")
+    record_hash: str = Field(alias="recordHash")
+    redacted_paths: list[list[str | int]] = Field(alias="redactedPaths")
+    archived: bool
+    integrity: Literal["VERIFIED", "INDETERMINATE", "TAMPERED", "UNVERIFIED"]
+
+
+class AccessReportResponse(_Response):
+    generated_at: str = Field(alias="generatedAt")
+    scope: ReportScopeView
+    integrity: ReportIntegrityView
+    summary: AccessSummaryView
+    events: list[AccessEventView]
+
+
 class RetentionResponse(_Response):
     dry_run: bool = Field(alias="dryRun")
     cutoff: str

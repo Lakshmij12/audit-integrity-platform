@@ -236,3 +236,15 @@ here is claimed to be complete.
     still checks them.
 72. **The bundle includes plaintext payload values** of the exported records, other than redacted
     leaves, for any auditor key. Treat bundles as sensitive.
+
+## Account-access reports (Scenario C, implemented in commit 11)
+73. **Reads through this service are not recorded as audit events.** Queries, exports and reports by
+    auditors appear only in the JSON access log, which is not tamper-evident (item 47; SCENARIO_C.md §5).
+74. **No regulator role or per-account authorization.** Any `auditor` or `admin` key can report on any
+    account. Reports are unsigned JSON; the signed export is the hand-over artifact.
+75. **Access means whatever producers log.** Only events with the configured client-account
+    `resourceType` are included, and the report is only as complete as the producers' logging.
+    Archived events show no `redactedPaths`, because their leaves are in the archive file.
+76. **Per-event status after a break is coarse.** Verification stops at the first violation, so later
+    events are UNVERIFIED rather than individually classified. Each report walks the whole chain
+    (item 57), and a report holds at most 10,000 events.

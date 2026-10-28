@@ -21,3 +21,5 @@ class Settings(BaseSettings):
     retention_window_days: int = Field(default=365, ge=1)
     # Archive files written by retention runs (plaintext payloads; keep access restricted).
     archive_dir: str = "archives"
+    # Scenario C: the resourceType that identifies client accounts in access reports.
+    account_resource_type: str = Field(default="CLIENT_ACCOUNT", min_length=1, max_length=128)

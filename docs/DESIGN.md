@@ -408,6 +408,16 @@ the private key, but a recipient cannot otherwise prove that every matching reco
 database was exported. Without an independently held checkpoint (`--anchor-*`), the head is
 authenticated only by the export signature, so a rewrite made before export cannot be ruled out.
 
+### 8.2 Account-access reports (Scenario C, commit 11)
+The clarified requirement, ambiguities, assumptions and scope boundary are in `docs/SCENARIO_C.md`.
+`GET /audit/reports/account-access` (auditor, admin) lists events on the configured client-account
+resource type (`AIP_ACCOUNT_RESOURCE_TYPE`, default `CLIENT_ACCOUNT`) for an `accountId` and/or
+`actorId`, with optional `eventType` and `[from, to)`, without payload values. Each report runs the full
+verification (§4.1, §6.1, §7.2) and states the overall status and a per-event status: VERIFIED,
+INDETERMINATE (redacted or archived evidence that could not be checked), TAMPERED (the first violation)
+or UNVERIFIED (after the first violation). Nothing new is stored: it reuses `query_records` and
+`verify_database`.
+
 ## 9. Alternatives considered
 | Alternative | Outcome | Reason |
 |-------------|---------|--------|

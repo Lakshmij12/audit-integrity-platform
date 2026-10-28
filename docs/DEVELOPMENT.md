@@ -205,6 +205,15 @@ isolated mode (`python -I`) from a temporary directory without `src` on the path
 VERIFIED, 3 INDETERMINATE (archived payloads not included), 1 FAILED, 2 usage error. `tools/` is
 included in strict mypy (`pyproject.toml`).
 
+## Account-access report (commit 11, Scenario C)
+```powershell
+$h = @{ "X-API-Key" = "<auditor key>" }
+Invoke-RestMethod -Headers $h -Uri "http://127.0.0.1:8000/audit/reports/account-access?accountId=acct-0001"
+Invoke-RestMethod -Headers $h -Uri "http://127.0.0.1:8000/audit/reports/account-access?actorId=advisor-1&from=2026-10-01T00:00:00Z&to=2026-11-01T00:00:00Z"
+```
+Events must use `resourceType` `CLIENT_ACCOUNT` (or the value of `AIP_ACCOUNT_RESOURCE_TYPE`). See
+docs/SCENARIO_C.md.
+
 ## Quality gates
 ```powershell
 .\.venv\Scripts\python.exe -m ruff check .
@@ -300,5 +309,14 @@ Commit 10 (export and standalone verifier; no dependency changes, so pip-audit w
 | `mypy` (strict, `warn_unreachable`, now including `tools/`) | 0 | `Success: no issues found in 71 source files` |
 | `pytest -W error --cov=aip --cov-branch` | 0 | `638 passed` (612 existing + 26 export/verifier, most of them running `tools/verify_bundle.py` as a subprocess); 96% overall; `routes_export.py` 95%, `export/bundle.py` 85% (uncovered: the 10,000-record limit and skipping malformed system events). `tools/` is outside `src/aip`, so coverage does not measure it; the subprocess tests exercise it |
 | `scripts/tamper_demo.py` | 0 | `RESULT: all steps behaved as expected` |
+
+Commit 11 (Scenario C account-access report; no dependency changes, so pip-audit was not re-run):
+
+| Gate | Exit code | Output |
+|------|-----------|--------|
+| `ruff check .` | 0 | `All checks passed!` |
+| `ruff format --check .` | 0 | `84 files already formatted` |
+| `mypy` (strict, `warn_unreachable`) | 0 | `Success: no issues found in 75 source files` |
+| `pytest -W error --cov=aip --cov-branch` | 0 | `649 passed` (638 existing + 11 report); 96% overall; `reports/access.py` 91%, `routes_reports.py` 95% |
 
 `poc/` is excluded from Ruff: it holds the redaction spike exactly as run and recorded in commit 3.

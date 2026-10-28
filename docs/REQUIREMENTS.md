@@ -24,7 +24,7 @@ intentionally vague compliance requirement into a concrete, scoped design (Scena
 | B1 | §5B Retention | Records older than a configurable window are archivable; no false-positive breaks for legitimate archives | Legitimate archive → intact; forged archive → violation |
 | B2 | §5B Redaction | Sensitive payload fields are redactable without breaking the chain; approach, trade-offs and limits documented | PoC, tests, DESIGN.md §6, LIMITATIONS.md |
 | B3 | §5B Export | Export all records for a `resourceId` or `actorId` as a self-contained bundle a recipient can verify | Standalone verifier tests |
-| C1 | §5C | Clarified requirement, ambiguities, assumptions, design, implemented vs scoped-out | docs/SCENARIO_C.md (planned future deliverable, to be committed before its code), plus implementation tests |
+| C1 | §5C | Clarified requirement, ambiguities, assumptions, design, implemented vs scoped-out | docs/SCENARIO_C.md and `tests/api/test_access_report.py` (commit 11; the document and the code were committed together, not the document first as planned) |
 | D1 | §0.4, §7 | Attestation, architecture, setup, testing approach, AI usage log, final summary | Files present and accurate |
 
 ## 3. Ambiguities and proposed decisions
