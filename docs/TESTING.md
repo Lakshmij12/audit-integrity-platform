@@ -23,16 +23,17 @@
 $env:PYTHONPATH = "src"; .\.venv\Scripts\python.exe scripts\tamper_demo.py
 ```
 
-## 3. Inventory (650 tests, commit 12)
+## 3. Inventory (669 tests)
 | Area | Tests | Covers |
 |------|------:|--------|
 | `tests/test_smoke.py` | 7 | Runtime and toolchain |
+| `tests/test_benchmark_smoke.py` | 1 | `scripts/benchmark.py` still runs end to end (30 records) |
 | `tests/crypto` | 268 | Canonical JSON (RFC 8785 subset), timestamps, hashes, typed-path commitments, payload root, chain checks, Ed25519 checkpoints and signed documents, known-answer vectors |
 | `tests/storage` | 85 | STRICT schema, constraints, triggers, v1→v2 migration (including a failed migration rolling back), transactions, failed and unknown COMMIT, rollback failures |
 | `tests/ingest` | 86 | Validation and limits, append, recordedAt clamping, thread and process concurrency, restart, full recomputation |
 | `tests/verify` | 25 | Every violation type, malformed rows, rewrites and truncation with and without anchors, no values in reports, the tamper demo script |
-| `tests/lifecycle` | 46 | Redaction (hashes unchanged, value gone from the DB and WAL files, unauthorized or altered or forged authorizations), retention (dry run, archive evidence, missing or altered archive, unauthorized archival, rollback and unknown-COMMIT file handling, restart) |
-| `tests/api` | 107 | Auth and roles, events API (including no PUT/PATCH/DELETE route), verify and checkpoints, redaction and retention endpoints, the Scenario C report |
+| `tests/lifecycle` | 48 | Redaction (hashes unchanged, value gone from the DB and WAL files, unauthorized or altered or forged authorizations), retention (dry run, archive evidence, missing or altered archive, unauthorized archival, rollback and unknown-COMMIT file handling, restart) |
+| `tests/api` | 123 | Auth and roles, OpenAPI security scheme and POST request schemas, events API (including no PUT/PATCH/DELETE route), verify and checkpoints, redaction and retention endpoints, the Scenario C report (including per-event status around redacted and archived records) |
 | `tests/export` | 26 | Export endpoint and the standalone verifier: valid, empty, partially redacted and archived bundles, wrong key, attacker re-signing, tampered sections, checks behind the signature, substitution, anchors, malformed input |
 
 Branch coverage of `src/aip`: 96% (DEVELOPMENT.md has the per-commit results). `tools/` and `scripts/`
@@ -54,8 +55,9 @@ are outside the coverage source and are exercised by subprocess tests.
 - **Linux and macOS.** Only Windows 10 with CPython 3.14.3 was run.
 - **Real crash or power loss** during archive writes or COMMIT. Failure paths are simulated by injecting
   exceptions, and the missing directory fsync is documented (LIMITATIONS 61).
-- **Large volumes and performance**, for example the 10,000-record limits or verification time on large
-  chains. No load testing was done.
+- **Load and concurrency performance.** `scripts/benchmark.py` measures single-threaded throughput and
+  latency up to 10,000 records (PERFORMANCE.md); there is no load, soak or contention benchmarking, and
+  the 10,000-record export and report limits are not exercised.
 - **Some defensive branches:** the 10,000-record export and report limits, skipping malformed system
   events during export, and some branches that are unreachable after earlier validation (listed in the
   coverage report).

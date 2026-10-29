@@ -228,6 +228,19 @@ keys/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+# Any SQLite database file and its WAL/SHM/journal, wherever AIP_DB_PATH points
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+# Local environment files
+.env.*
+# Export bundles contain plaintext payloads (write them to exports/)
+bundle*.json
+*.bundle.json
 .claude/settings.local.json
 # Confidential assignment material must never be committed
 *.pdf

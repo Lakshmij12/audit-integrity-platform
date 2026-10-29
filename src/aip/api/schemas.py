@@ -9,6 +9,28 @@ class _Response(BaseModel):
     model_config = ConfigDict(populate_by_name=True, frozen=True)
 
 
+def json_request_body(
+    model: type[BaseModel], *, required: bool, example: dict[str, Any]
+) -> dict[str, Any]:
+    """``openapi_extra`` documenting a JSON body that a route reads and validates itself.
+
+    The routes parse raw bytes (to enforce the streaming size limit and strict JSON), so FastAPI
+    cannot infer the body. The schema is generated from the same model the route validates with,
+    so the documentation cannot drift from the validation rules.
+    """
+    return {
+        "requestBody": {
+            "required": required,
+            "content": {
+                "application/json": {
+                    "schema": model.model_json_schema(by_alias=True),
+                    "example": example,
+                }
+            },
+        }
+    }
+
+
 class AppendResponse(_Response):
     seq: int
     event_id: str = Field(alias="eventId")

@@ -5,6 +5,16 @@ assignment. It records events in a SHA-256 hash chain over SQLite and verifies t
 demand. It supports authorized redaction and retention without breaking the chain, exports signed
 bundles that anyone can verify offline, and produces account-access reports for compliance review.
 
+## Start here
+- **Reviewers:** [FINAL_SUMMARY](docs/FINAL_SUMMARY.md) (requirement mapping and decisions), then
+  [ARCHITECTURE](docs/ARCHITECTURE.md) (diagrams, threat model, proposed production design).
+- **Running it:** the quick start below ("Prerequisites and installation", "Keys and server").
+- **Decisions:** [ADR-001 SQLite](docs/adr/ADR-001-sqlite-vs-postgresql.md),
+  [ADR-002 hash chain and Ed25519](docs/adr/ADR-002-hash-chain-and-ed25519.md),
+  [ADR-003 salted commitments](docs/adr/ADR-003-typed-path-salted-commitments.md).
+- **Operations and evidence:** [RUNBOOK](docs/RUNBOOK.md), [PERFORMANCE](docs/PERFORMANCE.md) (measured),
+  [TESTING](docs/TESTING.md), [LIMITATIONS](docs/LIMITATIONS.md), [AI_USAGE](docs/AI_USAGE.md).
+
 ## Key features
 - **Write and query API.** `POST /audit/events` and `GET /audit/events`, with filters on actor,
   resource, event type and time range, and keyset pagination. There is no update or delete endpoint.
@@ -52,7 +62,8 @@ Only SHA-256 hashes of API keys are configured; the keys themselves are never st
 `data/` and `archives/` are git-ignored. Other settings (all prefixed `AIP_`): `DB_PATH` (default
 `data/audit.db`), `ARCHIVE_DIR` (`archives`), `RETENTION_WINDOW_DAYS` (365), `ACCOUNT_RESOURCE_TYPE`
 (`CLIENT_ACCOUNT`), `MAX_BODY_BYTES` (131072), `BUSY_TIMEOUT_MS` (5000). Interactive API docs:
-`http://127.0.0.1:8000/docs`.
+`http://127.0.0.1:8000/docs`. Click **Authorize**, paste an API key under `ApiKey`, and every
+request sends it as `X-API-Key`; the POST endpoints show their JSON schema and an example body.
 
 ## Example requests (PowerShell; all data synthetic)
 ```powershell
@@ -77,14 +88,15 @@ Invoke-RestMethod -Method Post "$base/retention/runs" -Headers $adm
 Invoke-RestMethod -Method Post "$base/retention/runs" -Headers $adm -ContentType application/json -Body '{"dryRun": false}'
 
 # Signed export and Scenario C report
-Invoke-WebRequest "$base/export?resourceId=acct-0001" -Headers $a -OutFile bundle.json
+New-Item -ItemType Directory -Force exports | Out-Null   # exports/ is git-ignored: bundles hold plaintext payloads
+Invoke-WebRequest "$base/export?resourceId=acct-0001" -Headers $a -OutFile exports\bundle.json
 Invoke-RestMethod "$base/reports/account-access?accountId=acct-0001" -Headers $a
 ```
 
 ## Independent export verification
 ```powershell
-.\.venv\Scripts\python.exe tools\verify_bundle.py bundle.json --trusted-key <public key hex from new-signing-key>
-.\.venv\Scripts\python.exe tools\verify_bundle.py bundle.json --trusted-key <hex> --anchor-seq <seq> --anchor-hash <recordHash>
+.\.venv\Scripts\python.exe tools\verify_bundle.py exports\bundle.json --trusted-key <public key hex from new-signing-key>
+.\.venv\Scripts\python.exe tools\verify_bundle.py exports\bundle.json --trusted-key <hex> --anchor-seq <seq> --anchor-hash <recordHash>
 ```
 The verifier needs only Python 3.14 and `cryptography`; it does not import `aip`. It never trusts the
 public key embedded in the bundle. Exit codes: 0 VERIFIED, 3 INDETERMINATE (archived payloads are not
@@ -95,6 +107,7 @@ exported), 1 FAILED, 2 usage error.
 .\.venv\Scripts\python.exe -m pytest -W error --cov=aip --cov-branch
 .\.venv\Scripts\python.exe -m ruff check . ; .\.venv\Scripts\python.exe -m ruff format --check . ; .\.venv\Scripts\python.exe -m mypy
 $env:PYTHONPATH = "src"; .\.venv\Scripts\python.exe scripts\tamper_demo.py
+$env:PYTHONPATH = "src"; .\.venv\Scripts\python.exe scripts\benchmark.py --sizes 1000,10000   # optional, a few minutes
 ```
 The demo writes events through the API and verifies them. It then changes a stored value directly in
 SQLite and shows the API detecting it, and it shows truncation detected against a signed checkpoint.
@@ -118,7 +131,10 @@ The full list is in [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 | Document | Content |
 |----------|---------|
 | [docs/FINAL_SUMMARY.md](docs/FINAL_SUMMARY.md) | Requirement mapping, decisions, demo steps, production gaps |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, data flow, trust boundaries, threat model |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Diagrams, components, data flow, trust boundaries, threat model, proposed production design |
+| [docs/adr/](docs/adr/) | Architecture decision records (recorded retrospectively): SQLite, hash chain and Ed25519, salted commitments |
+| [docs/RUNBOOK.md](docs/RUNBOOK.md) | Manual incident procedures: TAMPERED, INDETERMINATE, archives, busy, unknown commits, key compromise, restore |
+| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Benchmark method, environment and measured results |
 | [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) | Requirements analysis and ambiguity decisions |
 | [docs/DESIGN.md](docs/DESIGN.md) | Detailed design: serialization, hashes, verification, redaction, retention, export |
 | [docs/SCENARIO_C.md](docs/SCENARIO_C.md) | Scenario C: clarified requirement, assumptions, design, scope |

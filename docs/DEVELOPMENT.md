@@ -195,10 +195,11 @@ the first time it is opened.
 ## Export and offline verification (commit 10)
 ```powershell
 $h = @{ "X-API-Key" = "<auditor key>" }
-Invoke-WebRequest -Uri "http://127.0.0.1:8000/audit/export?actorId=user-0042" -Headers $h -OutFile bundle.json
+New-Item -ItemType Directory -Force exports | Out-Null   # git-ignored; bundles hold plaintext payloads
+Invoke-WebRequest -Uri "http://127.0.0.1:8000/audit/export?actorId=user-0042" -Headers $h -OutFile exports\bundle.json
 # The public key printed by `new-signing-key` (or obtained from the operator), never the one in the bundle:
-python tools/verify_bundle.py bundle.json --trusted-key <64 hex characters>
-python tools/verify_bundle.py bundle.json --trusted-key-file trusted.hex --anchor-seq 42 --anchor-hash <recordHash>
+python tools/verify_bundle.py exports\bundle.json --trusted-key <64 hex characters>
+python tools/verify_bundle.py exports\bundle.json --trusted-key-file trusted.hex --anchor-seq 42 --anchor-hash <recordHash>
 ```
 The verifier needs only Python 3.14 and `cryptography`; it does not import `aip`. The tests run it in
 isolated mode (`python -I`) from a temporary directory without `src` on the path. Exit codes: 0
@@ -329,5 +330,55 @@ Commit 12 (documentation and submission readiness; one test added; no dependency
 | `pytest -W error --cov=aip --cov-branch` | 0 | `650 passed` (649 existing + 1 route-inventory test); 96% overall |
 | `scripts/tamper_demo.py` | 0 | `RESULT: all steps behaved as expected` |
 | Live run of every README command (uvicorn on a scratch database) | — | Ingest, query, verify (VERIFIED), redact, retention dry run and real run, export, account-access report, checkpoint; `tools/verify_bundle.py` exit 0, also with `--anchor-*`; no API key in the server log |
+
+Pre-submission audit fixes A–C (documentation status, ignore rules and export paths, native OpenAPI
+security scheme and POST request schemas; no dependency changes):
+
+| Gate | Exit code | Output |
+|------|-----------|--------|
+| `ruff check .` | 0 | `All checks passed!` |
+| `ruff format --check .` | 0 | `88 files already formatted` |
+| `mypy` (strict, `warn_unreachable`) | 0 | `Success: no issues found in 76 source files` |
+| `pytest -W error --cov=aip --cov-branch` | 0 | `658 passed` (650 existing + 8 OpenAPI); 96% overall; `api/auth.py`, `routes_events.py`, `routes_lifecycle.py`, `schemas.py` 100% |
+| `scripts/tamper_demo.py` | 0 | `RESULT: all steps behaved as expected` |
+| `pip_audit -r requirements-dev.lock --require-hashes --disable-pip` | 0 | `No known vulnerabilities found` (2026-10-28) |
+| Plain uvicorn, stock `/openapi.json` | — | `ApiKey` header scheme present; `POST /audit/events` documents its body; a POST with `X-API-Key` returned 201 |
+
+Scenario C per-event integrity correction (no dependency changes):
+
+| Gate | Exit code | Output |
+|------|-----------|--------|
+| `ruff check .` | 0 | `All checks passed!` |
+| `ruff format --check .` | 0 | `88 files already formatted` |
+| `mypy` (strict, `warn_unreachable`) | 0 | `Success: no issues found in 76 source files` |
+| `pytest -W error --cov=aip --cov-branch` | 0 | `668 passed` (658 existing + 10 regression); 96% overall; `reports/access.py` 91%, `verify/service.py` 93% |
+| Regression check against the previous mapping | — | the two "evidence verified before a later break" tests fail on the old `reports/access.py` and pass with the fix |
+| `scripts/tamper_demo.py` | 0 | `RESULT: all steps behaved as expected` |
+| `pip_audit -r requirements-dev.lock --require-hashes --disable-pip` | 0 | `No known vulnerabilities found` (2026-10-28) |
+
+Phase 2 engineering documentation and benchmark (no dependency or product-code changes):
+
+| Gate | Exit code | Output |
+|------|-----------|--------|
+| `ruff check .` | 0 | `All checks passed!` |
+| `ruff format --check .` | 0 | `95 files already formatted` |
+| `mypy` (strict, `warn_unreachable`) | 0 | `Success: no issues found in 77 source files` |
+| `mypy --strict scripts/benchmark.py` (scripts/ is outside the configured `files`) | 0 | `Success: no issues found in 1 source file` |
+| `pytest -W error --cov=aip --cov-branch` | 0 | `669 passed` (668 existing + 1 benchmark smoke test); 96% overall |
+| `scripts/tamper_demo.py` | 0 | `RESULT: all steps behaved as expected` |
+| `pip_audit -r requirements-dev.lock --require-hashes --disable-pip` | 0 | `No known vulnerabilities found` (2026-10-28) |
+| `scripts/benchmark.py --sizes 1000,10000` | 0 | Results in PERFORMANCE.md (measured before Ruff reformatted the script and moved two `noqa` comments; no logic changed) |
+| Mermaid diagrams in ARCHITECTURE.md | — | Structural check only (balanced blocks, quotes and brackets; every edge points to a defined node). No renderer was available locally, and installing one needs approval, so they have not been rendered |
+
+Final validation and documentation cleanup (documentation only; no code, test or dependency changes):
+
+| Gate | Exit code | Output |
+|------|-----------|--------|
+| Clean room: fresh clone plus the working-tree files, `python -m venv .venv`, `pip install --require-hashes -r requirements-dev.lock`, `pip check` | 0 | `No broken requirements found`; then `669 passed`, 96%, Ruff and mypy clean, tamper demo as expected, with nothing outside the clone |
+| Live checks against plain uvicorn (`--factory --app-dir src`) in the clean room | 0 | 39/39: OpenAPI `ApiKey` scheme on all 9 `/audit` operations and the 3 POST bodies; 401/403/422 cases; append 201; VERIFIED; checkpoint and anchor; redaction; offline verifier exit 0/0/1/1/2 (trusted key file, anchor, untrusted key, edited bundle, no key); Scenario C INDETERMINATE / VERIFIED / TAMPERED / UNVERIFIED; restart fails closed after a dropped trigger; no key or payload value in the logs |
+| `pip_audit -r requirements-dev.lock --require-hashes --disable-pip` (validation run) | 0 | `No known vulnerabilities found` |
+| After the cleanup: `pytest -W error --cov=aip --cov-branch` | 0 | `669 passed`; 96% overall |
+| After the cleanup: `ruff check .`, `ruff format --check .`, `mypy`, `scripts/tamper_demo.py` | 0 | `All checks passed!`; `95 files already formatted`; `no issues found in 77 source files`; `all steps behaved as expected` |
+| Documentation checks | — | Mermaid structural check (now also covering `break` blocks): no problems; every relative Markdown link in README, ATTESTATION and docs/ resolves |
 
 `poc/` is excluded from Ruff: it holds the redaction spike exactly as run and recorded in commit 3.

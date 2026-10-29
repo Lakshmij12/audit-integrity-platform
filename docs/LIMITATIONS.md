@@ -1,10 +1,9 @@
 # Limitations and Remaining Risks
 
-Implementation status (commit 7): the pure cryptographic foundations (`src/aip/crypto/`, commit 5),
-SQLite persistence with append-only ingestion (`src/aip/storage/`, `src/aip/ingest/`, commit 6) and
-the HTTP write and query API (`src/aip/api/`, commit 7) exist. There is no verification endpoint,
-redaction, retention, archive, export or signing code yet; items about those describe the proposed
-design in DESIGN.md and will be revised as they are implemented and tested.
+Status: all features in DESIGN.md are implemented (commits 5–11). Items 1–17 were written with the
+design (commit 2). Each later section was added with the commit that implemented that area; its
+heading names that commit, and the most recent relevant item takes precedence (for example, item 55
+is superseded by 58–66).
 Nothing in this repository is claimed to be production-ready, and no security control or test listed
 here is claimed to be complete.
 
@@ -48,7 +47,9 @@ here is claimed to be complete.
 ## Canonicalization and hashing (implemented in commit 5)
 18. **Hash links alone prove internal consistency only.** `check_chain` passes for a chain an attacker has
     rewritten and fully re-hashed, and for a truncated chain; tests assert both on purpose. Detection
-    needs an external trust anchor (a previously observed or signed head), which is not implemented yet.
+    needs an external trust anchor (a previously observed or signed head). Since commit 8 this is
+    available as signed checkpoints passed back as `anchorSeq`/`anchorHash` (and `--anchor-*` for the
+    offline verifier), but only for checkpoints held outside the service (items 51–53).
 19. `check_chain` trusts the stored `contentHash`; recomputing it from stored leaves (C3, C5) and checking
     redaction authorization (C6) are later steps. A redacted leaf is reported `REDACTED_UNVERIFIED`,
     never valid, and nothing in commit 5 decides whether a redaction was authorized.

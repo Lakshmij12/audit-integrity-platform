@@ -14,6 +14,7 @@ from aip.api.schemas import (
     RedactionResponse,
     RetentionRequest,
     RetentionResponse,
+    json_request_body,
 )
 from aip.ingest import IngestValidationError, Issue
 from aip.lifecycle import LifecycleService
@@ -45,6 +46,11 @@ async def _parse[M: BaseModel](request: Request, model: type[M], *, empty_ok: bo
     response_model=RedactionResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Redact payload fields of one event (admin)",
+    openapi_extra=json_request_body(
+        RedactionRequest,
+        required=True,
+        example={"paths": [["ssn"]], "reason": "client privacy request"},
+    ),
 )
 async def redact_event(
     request: Request,
@@ -77,6 +83,7 @@ async def redact_event(
     "/retention/runs",
     response_model=RetentionResponse,
     summary="Archive records older than the retention window (admin; dry run by default)",
+    openapi_extra=json_request_body(RetentionRequest, required=False, example={"dryRun": True}),
 )
 async def run_retention(
     request: Request,

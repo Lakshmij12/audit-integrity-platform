@@ -9,10 +9,10 @@ from starlette.concurrency import run_in_threadpool
 
 from aip.api.auth import Principal, require_reader, require_writer
 from aip.api.errors import PayloadTooLargeError
-from aip.api.schemas import AppendResponse, EventPage, EventView
+from aip.api.schemas import AppendResponse, EventPage, EventView, json_request_body
 from aip.crypto import Leaf, normalize_timestamp, unflatten
 from aip.crypto.errors import CryptoInputError
-from aip.ingest import IngestService, IngestValidationError, Issue, parse_event_json
+from aip.ingest import EventInput, IngestService, IngestValidationError, Issue, parse_event_json
 from aip.storage import Database, StoredRecord, load_leaves
 from aip.storage.repository import RecordFilter, query_records, read_record_by_event_id
 
@@ -45,6 +45,17 @@ async def _read_limited_body(request: Request, limit: int) -> bytes:
     status_code=status.HTTP_201_CREATED,
     response_model=AppendResponse,
     summary="Append an audit event",
+    openapi_extra=json_request_body(
+        EventInput,
+        required=True,
+        example={
+            "eventType": "ACCOUNT_VIEWED",
+            "actorId": "advisor-0042",
+            "resourceType": "CLIENT_ACCOUNT",
+            "resourceId": "acct-1001",
+            "payload": {"channel": "web", "fields": ["balance", "address"]},
+        },
+    ),
 )
 async def append_event(
     request: Request,

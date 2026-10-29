@@ -12,9 +12,10 @@ import hmac
 import re
 import secrets
 from dataclasses import dataclass
-from typing import Final
+from typing import Annotated, Final
 
-from fastapi import HTTPException, Request, status
+from fastapi import HTTPException, Request, Security, status
+from fastapi.security import APIKeyHeader
 
 ROLES: Final = frozenset({"writer", "auditor", "admin"})
 CAN_WRITE: Final = frozenset({"writer", "admin"})
@@ -69,9 +70,20 @@ def authenticate(presented: str | None, entries: tuple[ApiKeyEntry, ...]) -> Pri
     return None if match is None else Principal(match.role, match.key_hash[:8])
 
 
-def _require(request: Request, allowed: frozenset[str]) -> Principal:
+# Declares the header in OpenAPI (Swagger's Authorize button). auto_error=False: a missing header
+# yields None and the 401 below, exactly as before; FastAPI never answers on our behalf.
+api_key_scheme = APIKeyHeader(
+    name=API_KEY_HEADER,
+    auto_error=False,
+    scheme_name="ApiKey",
+    description="API key for the writer, auditor or admin role (python -m aip.cli new-api-key).",
+)
+_PresentedKey = Annotated[str | None, Security(api_key_scheme)]
+
+
+def _require(request: Request, presented: str | None, allowed: frozenset[str]) -> Principal:
     entries: tuple[ApiKeyEntry, ...] = request.app.state.api_keys
-    principal = authenticate(request.headers.get(API_KEY_HEADER), entries)
+    principal = authenticate(presented, entries)
     if principal is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing or invalid API key")
     if principal.role not in allowed:
@@ -80,13 +92,13 @@ def _require(request: Request, allowed: frozenset[str]) -> Principal:
     return principal
 
 
-def require_writer(request: Request) -> Principal:
-    return _require(request, CAN_WRITE)
+def require_writer(request: Request, presented: _PresentedKey = None) -> Principal:
+    return _require(request, presented, CAN_WRITE)
 
 
-def require_reader(request: Request) -> Principal:
-    return _require(request, CAN_READ)
+def require_reader(request: Request, presented: _PresentedKey = None) -> Principal:
+    return _require(request, presented, CAN_READ)
 
 
-def require_admin(request: Request) -> Principal:
-    return _require(request, CAN_ADMINISTER)
+def require_admin(request: Request, presented: _PresentedKey = None) -> Principal:
+    return _require(request, presented, CAN_ADMINISTER)

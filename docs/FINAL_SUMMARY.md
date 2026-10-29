@@ -1,7 +1,7 @@
 # Final Engineering Summary
 
 ## 1. Plan and rationale
-The work was split into 12 reviewed commits, each implemented, tested and staged by the AI assistant,
+The work was planned as 12 reviewed commits, each implemented, tested and staged by the AI assistant,
 then approved by the candidate (two gates: plan, then commit). The order follows the dependencies:
 
 1. Requirements and design.
@@ -12,6 +12,11 @@ then approved by the candidate (two gates: plan, then commit). The order follows
 6. Scenario C, then the final documentation.
 
 Each commit lists its quality-gate results in DEVELOPMENT.md and its AI involvement in AI_USAGE.md.
+
+Two commits follow the planned twelve: the candidate's completed attestation, and one final commit
+with the fixes from the pre-submission review and the engineering documentation (ADRs, RUNBOOK,
+PERFORMANCE; AI_USAGE §4, rows 24–27). The same rule applies to it: the candidate approves the exact
+staged files and commit message first (AI_USAGE §7).
 
 ## 2. Requirement-to-implementation mapping
 | Assignment requirement | Implementation | Evidence |
@@ -28,9 +33,9 @@ Each commit lists its quality-gate results in DEVELOPMENT.md and its AI involvem
 | C: clarified requirement, ambiguities, assumptions, design, implemented vs scoped out | `docs/SCENARIO_C.md`, `GET /audit/reports/account-access` | `tests/api/test_access_report.py` |
 | Core 1–2: requirement understanding, task decomposition | REQUIREMENTS.md, DESIGN.md, the commit plan (AI_USAGE §4) | — |
 | Core 3: AI-assisted execution, traceability, quality gates, human sign-off | AI_USAGE.md (sessions, accepted, modified and rejected suggestions, errors); gates for every commit | DEVELOPMENT.md "Quality gate results" |
-| Core 4: code, API/schema definitions, tests, docs | FastAPI OpenAPI (`/docs`), STRICT SQL schema, 650 tests | TESTING.md |
-| Core 5: risks, failure scenarios, guardrails | LIMITATIONS.md, ARCHITECTURE §5, failure-injection tests | — |
-| Deliverables: repository history, ATTESTATION.md, architecture, setup, testing, AI log, summary | README, ARCHITECTURE, TESTING, DEVELOPMENT, AI_USAGE, this document | ATTESTATION.md has personal fields for the candidate to complete |
+| Core 4: code, API/schema definitions, tests, docs | FastAPI OpenAPI (`/docs`, with the API-key scheme and POST request schemas), STRICT SQL schema, 669 tests | TESTING.md |
+| Core 5: risks, failure scenarios, guardrails | LIMITATIONS.md, ARCHITECTURE §5 (threat model), RUNBOOK.md, failure-injection tests | — |
+| Deliverables: repository history, ATTESTATION.md, architecture, setup, testing, AI log, summary | README, ARCHITECTURE, TESTING, DEVELOPMENT, AI_USAGE, this document | ATTESTATION.md, completed by the candidate |
 
 ## 3. Completed features
 API-key roles; ingestion with strict validation and limits; filtered keyset queries; a SHA-256 hash
@@ -51,6 +56,10 @@ demonstration.
   signed or CSV reports (SCENARIO_C §5).
 
 ## 5. Key decisions and trade-offs
+The three central decisions have architecture decision records with alternatives and consequences:
+[ADR-001](adr/ADR-001-sqlite-vs-postgresql.md), [ADR-002](adr/ADR-002-hash-chain-and-ed25519.md),
+[ADR-003](adr/ADR-003-typed-path-salted-commitments.md) (recorded retrospectively on 2026-10-28).
+
 | Decision | Why | Cost |
 |----------|-----|------|
 | Canonical JSON (an RFC 8785 subset: no floats, NFC strings) | The same bytes in any language; the independent verifier reimplements it | Clients must send decimals as strings |
@@ -68,11 +77,14 @@ demonstration.
    shows the change detected. It also shows truncation detected against a signed checkpoint.
 3. Run the README example requests: ingest, query, verify, checkpoint, redact, retention, export, and
    the account-access report.
-4. Run `tools/verify_bundle.py bundle.json --trusted-key <hex>`. Then edit `bundle.json` and run it
-   again; the result is `FAILED` with a specific code.
-5. Run `python -m pytest -W error --cov=aip --cov-branch`: 650 tests pass with 96% branch coverage.
+4. Run `tools/verify_bundle.py exports\bundle.json --trusted-key <hex>`. Then edit the bundle and run
+   it again; the result is `FAILED` with a specific code.
+5. Run `python -m pytest -W error --cov=aip --cov-branch`: 669 tests pass with 96% branch coverage.
 
 ## 7. What remains for production readiness
+ARCHITECTURE.md §7 has a current-versus-proposed matrix and a diagram of the proposed design (not
+implemented). PERFORMANCE.md has measured numbers, and RUNBOOK.md the manual incident procedures.
+
 - **Security:** TLS termination, rate limiting, encryption at rest, a KMS or HSM for the signing key
   with rotation and a list of trusted keys, an identity provider instead of static API keys, and
   per-account authorization.

@@ -294,3 +294,16 @@ def test_redaction_tampering_is_detected(
         seq,
     )
     assert SENSITIVE not in json.dumps(asdict(report), default=str)
+
+
+def test_indeterminate_seqs_name_only_the_unverifiable_redaction(
+    service: IngestService,
+    lifecycle: LifecycleService,
+    database: Database,
+    clock: FakeClock,
+    signer: Signer,
+) -> None:
+    ids = seed(service, clock, 3)
+    lifecycle.redact(ids[1], [["ssn"]], "r", requested_by="k1")
+    assert verify(database, signer).indeterminate_seqs == set()
+    assert verify(database, None).indeterminate_seqs == {2}

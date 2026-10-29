@@ -4,14 +4,13 @@ Clarified requirement: given a client account (or an actor) and a time range, li
 event on client-account resources (who, what, when) together with an explicit integrity status for
 the report as a whole and for each listed event, without returning payload values.
 
-Integrity mapping from one full-chain verification (``verify_database``), which stops at the first
-violation:
+Per-event integrity from one full-chain verification (``verify_database``), which stops at the first
+violation (at seq k, if any):
 
-* chain VERIFIED: every listed event is VERIFIED;
-* chain INDETERMINATE (no violation, but some redaction/archive evidence could not be checked):
-  redacted or archived events are INDETERMINATE, the others VERIFIED;
-* chain TAMPERED at seq k: events before k are VERIFIED (or INDETERMINATE as above), the event at k
-  is TAMPERED, and events after k are UNVERIFIED because verification stopped at k.
+* the event at k is TAMPERED; events after k are UNVERIFIED (verification did not reach them);
+* an event whose own redaction or archive evidence could not be checked (an untrusted signing key,
+  or an unavailable archive file; ``VerifyReport.indeterminate_seqs``) is INDETERMINATE;
+* every other event, including redacted or archived ones whose evidence verified, is VERIFIED.
 """
 
 from collections import Counter
@@ -73,16 +72,14 @@ class AccessReport:
         return sorted({event.account_id for event in self.events})
 
 
-def _event_integrity(
-    verification: VerifyReport, seq: int, *, redacted: bool, archived: bool
-) -> str:
+def _event_integrity(verification: VerifyReport, seq: int) -> str:
     problem = verification.first_inconsistency
     if problem is not None:
         if seq == problem.seq:
             return VerifyStatus.TAMPERED.value
         if seq > problem.seq:
-            return "UNVERIFIED"
-    if verification.status is not VerifyStatus.VERIFIED and (redacted or archived):
+            return "UNVERIFIED"  # verification stopped before reaching it
+    if seq in verification.indeterminate_seqs:
         return VerifyStatus.INDETERMINATE.value
     return VerifyStatus.VERIFIED.value
 
@@ -137,9 +134,7 @@ def build_access_report(
                     record_hash=record.record_hash,
                     redacted_paths=redacted,
                     archived=archived,
-                    integrity=_event_integrity(
-                        verification, record.seq, redacted=bool(redacted), archived=archived
-                    ),
+                    integrity=_event_integrity(verification, record.seq),
                 )
             )
         if len(report.events) > MAX_REPORT_EVENTS:

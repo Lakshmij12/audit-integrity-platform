@@ -1,11 +1,10 @@
 # Design: Hash Chain, Redaction, Retention and Export
 
-**Status: Proposed — pending engineer approval.** Partly implemented: §1, §2 and the chain link checks
-(C1, C2, C4, C4a) of §4 exist as pure functions (commit 5); §3 persistence and append-only ingestion
-exist as a service layer (commit 6) with the write and query HTTP API (commit 7, see
-docs/DEVELOPMENT.md "Running the API"); everything else is not implemented. This
-document will be marked
-approved only after explicit approval by the engineer, and updated as features are built and tested.
+**Status: implemented (commits 5–11).** Every section below has been built and tested. The engineer
+approved each implementation step through the two-gate process (plan, then the exact staged commit;
+see docs/AI_USAGE.md §4). The original proposal text is kept for traceability. Where the build
+differs from it, a subsection headed "As implemented in commit N" (§4.1, §6.1, §7.2, §8.1, §8.2)
+records what was actually built and why; those subsections take precedence.
 
 ## 1. Deterministic serialization
 *Implemented in commit 5 (`src/aip/crypto/canonical.py`, `timestamps.py`).*
@@ -419,6 +418,8 @@ or UNVERIFIED (after the first violation). Nothing new is stored: it reuses `que
 `verify_database`.
 
 ## 9. Alternatives considered
+The central decisions are expanded in docs/adr/ (ADR-001 to ADR-003, recorded retrospectively).
+
 | Alternative | Outcome | Reason |
 |-------------|---------|--------|
 | HMAC-keyed chain | Rejected | Recipients would need the secret to verify |

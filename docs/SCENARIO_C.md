@@ -35,12 +35,14 @@ assumptions we identified, the design that follows, and what we implemented vers
   `resourceType` fixed to the configured client-account type. No new tables or schema changes.
 - **Integrity.** `verify_database` runs with the service's trusted key and archive directory, exactly
   as in `GET /audit/verify`. Overall status: VERIFIED, INDETERMINATE or TAMPERED, plus the
-  first-inconsistency seq and violation type. Per event:
-  - **Chain VERIFIED:** every event is VERIFIED.
-  - **Chain INDETERMINATE:** redacted or archived events are INDETERMINATE, because their
-    authorizations or archived content could not be checked. The others are VERIFIED.
-  - **Chain TAMPERED at seq k:** events before k are VERIFIED, the event at k is TAMPERED, and events
-    after k are UNVERIFIED, because verification stops at the first violation.
+  first-inconsistency seq and violation type. Per event, from what verification established for
+  that record:
+  - **TAMPERED:** the record at the first violation (seq k).
+  - **UNVERIFIED:** records after k, because verification stops at the first violation.
+  - **INDETERMINATE:** a record whose own redaction or archive evidence could not be checked (its
+    authorization is signed by a key not trusted here, or its archive file is unavailable).
+  - **VERIFIED:** every other record, including redacted or archived ones whose evidence verified,
+    even when a later record is tampered.
 
   `summary.eventsNotVerified` counts every event that is not VERIFIED.
 - **Content.** Per event: `seq`, `eventId`, `eventType`, `actorId`, `accountId`, `timestamp`,
@@ -58,13 +60,26 @@ assumptions we identified, the design that follows, and what we implemented vers
 ## 4. Implemented (commit 11)
 - `src/aip/reports/access.py` (report builder and per-event integrity mapping),
   `src/aip/api/routes_reports.py` (endpoint), schemas, and the `AIP_ACCOUNT_RESOURCE_TYPE` setting.
-- `tests/api/test_access_report.py` (11 tests):
+- `tests/api/test_access_report.py`, original tests (11, commit 11):
   - filtering by account, actor, event type and time range, plus the empty result
   - report correctness: exact summary and event fields, and no payload values in the response
   - redacted and archived events
   - INDETERMINATE when no trusted key is configured
   - per-event TAMPERED and UNVERIFIED after direct database tampering
   - authorization (401, 403, 200 for admin) and 422 errors
+
+**Later correction (after commit 12).** The original per-event mapping was too coarse: redacted or
+archived events before a later break were reported INDETERMINATE even when their own evidence had
+verified. `reports/access.py` now classifies each event from `VerifyReport.indeterminate_seqs` (§3,
+"Integrity"). Regression tests added with the correction (10):
+- `tests/api/test_access_report.py` (8, bringing the file to 19):
+  - archived events whose evidence verified stay VERIFIED before a later TAMPERED record
+  - with an untrusted signing key, only the redacted event is INDETERMINATE before a break
+  - a missing archive file makes only the archived events INDETERMINATE
+  - the classification itself, for 5 combinations of break position and unverifiable records
+- `tests/lifecycle/test_redaction.py` and `tests/lifecycle/test_retention.py` (1 each):
+  `indeterminate_seqs` names exactly the records whose redaction or archive evidence could not be
+  checked.
 
 ## 5. Scoped out, and why
 - **Auditing reads of this service itself.** Recording `GET /audit/events`, exports and reports as

@@ -3,8 +3,9 @@
 Source: the assignment brief, which is confidential and deliberately not stored in this repository.
 Requirements are restated in our own words with section references.
 
-Implementation status (commit 2): no application code exists yet. The acceptance evidence column
-describes planned tests, not completed ones.
+Written in commit 2, before any application code; the "Planned acceptance evidence" column is that
+plan. Status now: every requirement below is implemented and tested (commits 5–12). The evidence that
+exists is mapped in docs/FINAL_SUMMARY.md §2 and docs/TESTING.md.
 
 ## 1. Problem statement
 Build an append-only audit log service with an HTTP API. Each stored record is hash-linked to its

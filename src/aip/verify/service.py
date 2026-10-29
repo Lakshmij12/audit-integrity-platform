@@ -121,6 +121,9 @@ class VerifyReport:
     archived_records_verified: int = 0
     archived_records_unverified: int = 0
     archived_content_unavailable: int = 0
+    # Internal (not in the API response): seqs whose redaction or archive evidence could not be
+    # checked, i.e. exactly the records behind the three "unverified"/"unavailable" counters.
+    indeterminate_seqs: set[int] = field(default_factory=set)
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -477,6 +480,8 @@ def _judge_leaves(
         )
     report.redacted_leaves_authorized += authorized
     report.redacted_leaves_unverified += unverified
+    if unverified:
+        report.indeterminate_seqs.add(target.seq)
     return None
 
 
@@ -526,10 +531,12 @@ def _check_archived(
         return Inconsistency(target.seq, Violation.INVALID_ARCHIVE, shown_id, field="archive")
     if grant.status is not _Auth.VALID:
         report.archived_records_unverified += 1
+        report.indeterminate_seqs.add(target.seq)
         return None
     archive = _load_archive(evidence, str(run_id), grant.document)
     if archive == _UNAVAILABLE:
         report.archived_content_unavailable += 1
+        report.indeterminate_seqs.add(target.seq)
         return None
     if isinstance(archive, Violation):
         return Inconsistency(target.seq, archive, shown_id, field="archive")

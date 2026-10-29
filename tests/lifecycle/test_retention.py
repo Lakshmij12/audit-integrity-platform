@@ -357,3 +357,19 @@ def test_archive_names_and_files_are_never_overwritten(tmp_path: Path) -> None:
     write_archive(path, b"{}")
     with pytest.raises(FileExistsError):
         write_archive(path, b"{}")
+
+
+def test_indeterminate_seqs_are_exactly_the_unchecked_archived_records(
+    service: IngestService,
+    lifecycle: LifecycleService,
+    database: Database,
+    clock: FakeClock,
+    signer: Signer,
+    archive_dir: Path,
+) -> None:
+    _age(service, clock, 2, 1)  # seqs 1-2 archived, seq 3 live, run is seq 4
+    _, name = _archive(lifecycle)
+    assert verify(database, signer, archive_dir).indeterminate_seqs == set()
+    assert verify(database, None, archive_dir).indeterminate_seqs == {1, 2}  # untrusted run
+    (archive_dir / name).unlink()
+    assert verify(database, signer, archive_dir).indeterminate_seqs == {1, 2}  # file unavailable

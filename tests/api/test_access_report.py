@@ -9,6 +9,8 @@ from fastapi.testclient import TestClient
 
 from aip.api import create_app
 from aip.crypto.signing import generate_signing_key
+from aip.reports.access import _event_integrity
+from aip.verify import Inconsistency, VerifyReport, Violation
 from tests.api.conftest import auth, make_settings
 from tests.ingest.support import FakeClock, event_data, raw_connection
 
@@ -198,3 +200,106 @@ def test_invalid_requests(client: TestClient, params: dict[str, str]) -> None:
     response = client.get(URL, params=params, headers=auth("auditor"))
     assert response.status_code == 422
     assert response.json()["code"] == "validation_failed"
+
+
+def _tamper_actor(db_file: Path, seq: int) -> None:
+    conn = raw_connection(db_file)
+    try:
+        conn.execute("DROP TRIGGER IF EXISTS audit_records_no_update")
+        conn.execute(f"UPDATE audit_records SET actor_id = 'advisor-9' WHERE seq = {seq:d}")  # noqa: S608
+    finally:
+        conn.close()
+
+
+def _integrities(body: dict[str, Any]) -> list[tuple[int, str]]:
+    return [(e["seq"], e["integrity"]) for e in body["events"]]
+
+
+def test_verified_archived_records_before_a_later_break_stay_verified(
+    client: TestClient, clock: FakeClock, db_file: Path
+) -> None:
+    """Regression: archived events whose signed run and archive file verified were labelled
+    INDETERMINATE whenever a later record was tampered."""
+    _seed(client, clock)  # seqs 1-5 (seq 5 is not a client account)
+    clock.advance(days=31)
+    _write(client, clock, eventType="ACCOUNT_VIEWED", actorId="advisor-3", resourceId="acct-1")
+    run = client.post("/audit/retention/runs", json={"dryRun": False}, headers=auth("admin"))
+    assert run.status_code == 201  # archives seqs 1-5; the run itself is seq 7
+    _write(client, clock, eventType="ACCOUNT_VIEWED", actorId="advisor-4", resourceId="acct-1")
+    _tamper_actor(db_file, 6)
+    body = _report(client, accountId="acct-1")
+    assert body["integrity"]["status"] == "TAMPERED"
+    assert _integrities(body) == [
+        (1, "VERIFIED"),
+        (2, "VERIFIED"),
+        (3, "VERIFIED"),
+        (6, "TAMPERED"),
+        (8, "UNVERIFIED"),
+    ]
+    assert [e["archived"] for e in body["events"]] == [True, True, True, False, False]
+    assert body["summary"]["eventsNotVerified"] == 2
+
+
+def test_redaction_with_untrusted_evidence_before_a_break(
+    client: TestClient, clock: FakeClock, db_file: Path
+) -> None:
+    ids = _seed(client, clock)
+    redaction = client.post(
+        f"/audit/events/{ids[0]}/redactions",
+        json={"paths": [["ssn"]], "reason": "privacy"},
+        headers=auth("admin"),
+    )
+    assert redaction.status_code == 201
+    # The same database also served without the signing key (opened before tampering, because
+    # opening checks the schema and fails closed once a guard trigger is gone).
+    with TestClient(create_app(make_settings(db_file), clock=clock)) as unsigned:
+        _tamper_actor(db_file, 3)
+        trusted = _report(client, accountId="acct-1")
+        response = unsigned.get(URL, params={"accountId": "acct-1"}, headers=auth("auditor"))
+    assert _integrities(trusted) == [(1, "VERIFIED"), (2, "VERIFIED"), (3, "TAMPERED")]
+    # Without the key the redaction grant is unverifiable: that event alone is INDETERMINATE.
+    assert _integrities(response.json()) == [
+        (1, "INDETERMINATE"),
+        (2, "VERIFIED"),
+        (3, "TAMPERED"),
+    ]
+
+
+def test_missing_archive_file_makes_only_archived_events_indeterminate(
+    client: TestClient, clock: FakeClock, tmp_path: Path
+) -> None:
+    _seed(client, clock)
+    clock.advance(days=31)
+    _write(client, clock, eventType="ACCOUNT_VIEWED", actorId="advisor-3", resourceId="acct-1")
+    run = client.post("/audit/retention/runs", json={"dryRun": False}, headers=auth("admin"))
+    (tmp_path / "archives" / run.json()["archiveFile"]).unlink()
+    body = _report(client, accountId="acct-1")
+    assert body["integrity"]["status"] == "INDETERMINATE"
+    assert _integrities(body) == [
+        (1, "INDETERMINATE"),
+        (2, "INDETERMINATE"),
+        (3, "INDETERMINATE"),
+        (6, "VERIFIED"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("break_at", "indeterminate", "expected"),
+    [
+        (None, set(), ["VERIFIED"] * 6),
+        (None, {2, 5}, ["VERIFIED", "INDETERMINATE", "VERIFIED", "VERIFIED", "INDETERMINATE",
+                        "VERIFIED"]),
+        (4, {2}, ["VERIFIED", "INDETERMINATE", "VERIFIED", "TAMPERED", "UNVERIFIED",
+                  "UNVERIFIED"]),
+        (4, {5}, ["VERIFIED", "VERIFIED", "VERIFIED", "TAMPERED", "UNVERIFIED", "UNVERIFIED"]),
+        (1, set(), ["TAMPERED"] + ["UNVERIFIED"] * 5),
+    ],
+)  # fmt: skip
+def test_event_integrity_classification(
+    break_at: int | None, indeterminate: set[int], expected: list[str]
+) -> None:
+    verification = VerifyReport(indeterminate_seqs=indeterminate)
+    if break_at is not None:
+        verification.intact = False
+        verification.first_inconsistency = Inconsistency(break_at, Violation.CONTENT_HASH_MISMATCH)
+    assert [_event_integrity(verification, seq) for seq in range(1, 7)] == expected
