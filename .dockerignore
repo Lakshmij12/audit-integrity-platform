@@ -1,0 +1,21 @@
+.git
+.venv
+**/__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+.env
+.env.*
+# Local state and secrets never go into the image
+data
+archives
+exports
+keys
+*.pem
+*.db
+*.db-*
+*.sqlite*
+bundle*.json
+*.pdf

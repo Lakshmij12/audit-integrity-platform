@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audit Integrity Console</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #5d6673; --border: #dde1e6;
+    --accent: #2f5fd0; --accent-text: #ffffff; --code-bg: #f1f3f6;
+    --ok: #1c7c4a; --ok-bg: #e3f4ea; --warn: #8a5a00; --warn-bg: #fbf0d9; --bad: #b42318; --bad-bg: #fde7e5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111418; --panel: #1a1e24; --text: #e6e9ee; --muted: #9aa3ae; --border: #2c323a;
+      --accent: #6d94ff; --accent-text: #0b1020; --code-bg: #14181d;
+      --ok: #5fd197; --ok-bg: #12301f; --warn: #f0c060; --warn-bg: #352a10; --bad: #ff8a80; --bad-bg: #3a1714;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { background: var(--panel); border-bottom: 1px solid var(--border); padding: 12px 16px;
+           display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 16px; margin: 0; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  nav { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 16px; }
+  nav button { background: transparent; color: var(--muted); border: 1px solid transparent; }
+  nav button.active { background: var(--panel); color: var(--text); border-color: var(--border); }
+  section.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+                  padding: 16px; margin-bottom: 16px; }
+  section.panel h2 { font-size: 15px; margin: 0 0 4px; }
+  .hint { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+  input, select, textarea { font: inherit; color: var(--text); background: var(--bg);
+         border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; width: 100%; }
+  textarea { font-family: ui-monospace, Consolas, monospace; font-size: 12px; min-height: 110px; }
+  button { font: inherit; cursor: pointer; border-radius: 6px; padding: 7px 12px;
+           border: 1px solid var(--border); background: var(--panel); color: var(--text); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  tbody tr.click { cursor: pointer; }
+  tbody tr.click:hover { background: var(--code-bg); }
+  .table-wrap { overflow-x: auto; }
+  code, pre { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px;
+        overflow: auto; max-height: 420px; margin: 8px 0 0; white-space: pre-wrap; word-break: break-all; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; font-weight: 600; }
+  .ok { color: var(--ok); background: var(--ok-bg); }
+  .warn { color: var(--warn); background: var(--warn-bg); }
+  .bad { color: var(--bad); background: var(--bad-bg); }
+  .big-status { font-size: 22px; font-weight: 700; padding: 6px 14px; border-radius: 8px; display: inline-block; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 12px; }
+  .stat { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+  .stat b { display: block; font-size: 18px; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  .msg { margin-top: 10px; padding: 8px 10px; border-radius: 6px; font-size: 13px; }
+  .hidden { display: none; }
+  .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+  .keys { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+  .keys label { width: 190px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--border); margin-right: 4px; }
+  .dot.on { background: var(--ok); }
+  @media (max-width: 600px) { .keys label { width: 100%; } }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Audit Integrity Console</h1>
+    <div class="sub">Test UI for the tamper-evident audit log &middot; <a href="/docs" target="_blank" style="color:var(--accent)">API docs</a></div>
+  </div>
+  <div class="keys">
+    <label><span><span class="dot" id="dot-writer"></span>Writer key</span><input id="key-writer" type="password" autocomplete="off"></label>
+    <label><span><span class="dot" id="dot-auditor"></span>Auditor key</span><input id="key-auditor" type="password" autocomplete="off"></label>
+    <label><span><span class="dot" id="dot-admin"></span>Admin key</span><input id="key-admin" type="password" autocomplete="off"></label>
+  </div>
+</header>
+
+<main>
+  <nav id="tabs">
+    <button data-tab="write" class="active">Write</button>
+    <button data-tab="browse">Browse</button>
+    <button data-tab="verify">Verify</button>
+    <button data-tab="report">Access report</button>
+    <button data-tab="export">Export</button>
+    <button data-tab="retention">Retention</button>
+  </nav>
+
+  <!-- WRITE -->
+  <div data-view="write">
+    <section class="panel">
+      <h2>Append an event</h2>
+      <p class="hint">Uses the writer key. Timestamp is optional; the server time is used if empty. Use synthetic data only.</p>
+      <div class="grid">
+        <label>Event type<input id="w-type" value="ACCOUNT_VIEWED"></label>
+        <label>Actor ID<input id="w-actor" value="advisor-1"></label>
+        <label>Resource type<input id="w-rtype" value="CLIENT_ACCOUNT"></label>
+        <label>Resource ID<input id="w-rid" value="acct-0001"></label>
+        <label>Timestamp (optional, ISO 8601)<input id="w-ts" placeholder="2026-10-29T12:00:00Z"></label>
+      </div>
+      <label style="margin-top:10px">Payload (JSON object)<textarea id="w-payload">{"ssn": "900-00-0001", "channel": "web", "address": {"city": "Springfield"}}</textarea></label>
+      <div class="row">
+        <button class="primary" id="w-send">Append event</button>
+        <button id="w-sample">Load 12 sample events</button>
+      </div>
+      <div id="w-out"></div>
+    </section>
+  </div>
+
+  <!-- BROWSE -->
+  <div data-view="browse" class="hidden">
+    <section class="panel">
+      <h2>Query events</h2>
+      <p class="hint">Uses the auditor key. Click a row to see the full record, or <b>Redact</b> to remove payload values (admin key).</p>
+      <div class="grid">
+        <label>Actor ID<input id="b-actor"></label>
+        <label>Resource type<input id="b-rtype"></label>
+        <label>Resource ID<input id="b-rid"></label>
+        <label>Event type<input id="b-type"></label>
+        <label>From<input id="b-from" placeholder="2026-01-01T00:00:00Z"></label>
+        <label>To<input id="b-to"></label>
+        <label>Page size<select id="b-limit"><option>10</option><option selected>25</option><option>50</option><option>100</option></select></label>
+      </div>
+      <div class="row">
+        <button class="primary" id="b-search">Search</button>
+        <button id="b-next" disabled>Next page</button>
+        <span class="hint" id="b-count" style="margin:0"></span>
+      </div>
+      <div id="b-out"></div>
+      <div class="table-wrap"><table class="hidden" id="b-table">
+        <thead><tr><th>Seq</th><th>Timestamp</th><th>Type</th><th>Actor</th><th>Resource</th><th>State</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+    </section>
+    <section class="panel hidden" id="detail">
+      <h2>Event <span class="mono" id="d-id"></span></h2>
+      <pre id="d-json"></pre>
+      <h2 style="margin-top:16px">Redact fields</h2>
+      <p class="hint">Admin key and a signing key required. One path per line, segments separated by dots (e.g. <code>ssn</code> or <code>address.city</code>). The chain stays verifiable.</p>
+      <div class="grid">
+        <label>Paths<textarea id="d-paths" style="min-height:60px">ssn</textarea></label>
+        <label>Reason<input id="d-reason" value="client privacy request"></label>
+      </div>
+      <div class="row"><button class="primary" id="d-redact">Redact</button></div>
+      <div id="d-out"></div>
+    </section>
+  </div>
+
+  <!-- VERIFY -->
+  <div data-view="verify" class="hidden">
+    <section class="panel">
+      <h2>Verify the hash chain</h2>
+      <p class="hint">Walks every record and reports the first inconsistency, including direct edits to the SQLite file.</p>
+      <div class="row">
+        <button class="primary" id="v-run">Verify now</button>
+        <button id="v-checkpoint">Sign checkpoint</button>
+      </div>
+      <div id="v-out"></div>
+    </section>
+    <section class="panel">
+      <h2>Checkpoints</h2>
+      <p class="hint">Signed checkpoints are saved in this browser. Verifying against one also detects rewriting or truncation of the chain.</p>
+      <div class="table-wrap"><table id="cp-table">
+        <thead><tr><th>Seq</th><th>Record hash</th><th>Signed at</th><th>Key ID</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table></div>
+      <p class="hint" id="cp-empty">No checkpoints yet.</p>
+    </section>
+  </div>
+
+  <!-- REPORT -->
+  <div data-view="report" class="hidden">
+    <section class="panel">
+      <h2>Account-access report</h2>
+      <p class="hint">Who accessed client account data, when and how, with an integrity status for each event. Give an account ID or an actor ID (or both).</p>
+      <div class="grid">
+        <label>Account ID<input id="r-acct"></label>
+        <label>Actor ID<input id="r-actor"></label>
+        <label>Event type<input id="r-type"></label>
+        <label>From<input id="r-from"></label>
+        <label>To<input id="r-to"></label>
+      </div>
+      <div class="row"><button class="primary" id="r-run">Run report</button></div>
+      <div id="r-out"></div>
+    </section>
+  </div>
+
+  <!-- EXPORT -->
+  <div data-view="export" class="hidden">
+    <section class="panel">
+      <h2>Signed export bundle</h2>
+      <p class="hint">Exports every record for one actor or one resource, signed. Verify offline with <code>tools/verify_bundle.py</code>.</p>
+      <div class="grid">
+        <label>Export by<select id="e-by"><option value="actorId">Actor ID</option><option value="resourceId">Resource ID</option></select></label>
+        <label>Value<input id="e-val" value="advisor-1"></label>
+      </div>
+      <div class="row"><button class="primary" id="e-run">Export</button></div>
+      <div id="e-out"></div>
+    </section>
+  </div>
+
+  <!-- RETENTION -->
+  <div data-view="retention" class="hidden">
+    <section class="panel">
+      <h2>Retention run</h2>
+      <p class="hint">Admin key. Moves records older than the retention window (default 365 days) to a signed archive. Dry run reports only.</p>
+      <label style="flex-direction:row;align-items:center;gap:8px;color:var(--text)"><input type="checkbox" id="t-dry" checked style="width:auto"> Dry run</label>
+      <div class="row"><button class="primary" id="t-run">Run retention</button></div>
+      <div id="t-out"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const statusClass = (s) => ({ VERIFIED: "ok", INDETERMINATE: "warn", UNVERIFIED: "warn", TAMPERED: "bad" }[s] || "warn");
+const badge = (s) => `<span class="badge ${statusClass(s)}">${esc(s)}</span>`;
+const short = (h) => h ? `${h.slice(0, 12)}…` : "";
+
+// --- API keys ---------------------------------------------------------------
+const ROLES = ["writer", "auditor", "admin"];
+for (const r of ROLES) {
+  const input = $(`key-${r}`);
+  input.value = store.get(`aip-key-${r}`, "");
+  const sync = () => { store.set(`aip-key-${r}`, input.value.trim()); $(`dot-${r}`).classList.toggle("on", !!input.value.trim()); };
+  input.addEventListener("input", sync); sync();
+}
+const key = (role) => $(`key-${role}`).value.trim();
+
+// --- HTTP -------------------------------------------------------------------
+class ApiError extends Error { constructor(status, body) { super(body?.title || `HTTP ${status}`); this.status = status; this.body = body; } }
+
+async function api(role, method, path, { query, body } = {}) {
+  const k = key(role);
+  if (!k) throw new ApiError(0, { title: `No ${role} key`, detail: `Paste the ${role} API key at the top of the page.` });
+  const qs = query ? "?" + new URLSearchParams(Object.entries(query).filter(([, v]) => v !== "" && v != null)) : "";
+  const res = await fetch(path + qs, {
+    method,
+    headers: { "X-API-Key": k, ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let data; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+  if (!res.ok) throw new ApiError(res.status, typeof data === "object" ? data : { title: `HTTP ${res.status}`, detail: text });
+  return data;
+}
+
+function showError(el, err) {
+  const b = err.body || {};
+  const issues = Array.isArray(b.issues)
+    ? "<br>" + b.issues.map((i) => `<code>${esc(i.field)}</code>: ${esc(i.code)}`).join("<br>") : "";
+  el.innerHTML = `<div class="msg bad"><b>${esc(err.status ? err.status + " · " : "")}${esc(b.title || err.message)}</b>${b.detail ? "<br>" + esc(b.detail) : ""}${issues}</div>`;
+}
+const showOk = (el, html) => { el.innerHTML = `<div class="msg ok">${html}</div>`; };
+
+async function run(btn, outEl, fn) {
+  btn.disabled = true;
+  try { await fn(); } catch (e) { showError(outEl, e); } finally { btn.disabled = false; }
+}
+
+// --- Tabs -------------------------------------------------------------------
+const tabs = document.querySelectorAll("#tabs button");
+function selectTab(name) {
+  tabs.forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  document.querySelectorAll("[data-view]").forEach((v) => v.classList.toggle("hidden", v.dataset.view !== name));
+  store.set("aip-tab", name);
+}
+tabs.forEach((b) => b.addEventListener("click", () => selectTab(b.dataset.tab)));
+selectTab(store.get("aip-tab", "write"));
+
+// --- Write ------------------------------------------------------------------
+$("w-send").onclick = () => run($("w-send"), $("w-out"), async () => {
+  let payload;
+  try { payload = JSON.parse($("w-payload").value || "{}"); }
+  catch (e) { throw new ApiError(0, { title: "Payload is not valid JSON", detail: e.message }); }
+  const body = { eventType: $("w-type").value, actorId: $("w-actor").value, resourceType: $("w-rtype").value,
+                 resourceId: $("w-rid").value, payload };
+  if ($("w-ts").value.trim()) body.timestamp = $("w-ts").value.trim();
+  const r = await api("writer", "POST", "/audit/events", { body });
+  showOk($("w-out"), `Appended as seq <b>${r.seq}</b> · <span class="mono">${esc(r.eventId)}</span><br>record hash <span class="mono">${esc(r.recordHash)}</span>`);
+});
+
+$("w-sample").onclick = () => run($("w-sample"), $("w-out"), async () => {
+  const actors = ["advisor-1", "advisor-2", "ops-7"];
+  const types = ["ACCOUNT_VIEWED", "ACCOUNT_VIEWED", "STATEMENT_DOWNLOADED", "ACCOUNT_UPDATED"];
+  const channels = ["web", "mobile", "branch"];
+  for (let i = 0; i < 12; i++) {
+    const n = String(1 + (i % 4)).padStart(4, "0");
+    await api("writer", "POST", "/audit/events", { body: {
+      eventType: types[i % types.length], actorId: actors[i % actors.length], resourceType: "CLIENT_ACCOUNT",
+      resourceId: `acct-${n}`, payload: { ssn: `900-00-${n}`, channel: channels[i % 3], note: `synthetic event ${i + 1}` },
+    } });
+  }
+  showOk($("w-out"), "Appended 12 synthetic events across 3 actors and 4 accounts.");
+});
+
+// --- Browse -----------------------------------------------------------------
+let nextCursor = null, shownCount = 0;
+function browseQuery(cursor) {
+  return { actorId: $("b-actor").value.trim(), resourceType: $("b-rtype").value.trim(), resourceId: $("b-rid").value.trim(),
+           eventType: $("b-type").value.trim(), from: $("b-from").value.trim(), to: $("b-to").value.trim(),
+           limit: $("b-limit").value, cursor };
+}
+async function loadPage(append) {
+  const page = await api("auditor", "GET", "/audit/events", { query: browseQuery(append ? nextCursor : null) });
+  const tbody = $("b-table").querySelector("tbody");
+  if (!append) { tbody.innerHTML = ""; shownCount = 0; }
+  for (const e of page.items) {
+    const tr = document.createElement("tr");
+    tr.className = "click";
+    const state = e.archived ? `<span class="badge warn">archived</span>`
+                : e.redactedPaths.length ? `<span class="badge warn">redacted ${e.redactedPaths.length}</span>` : "";
+    tr.innerHTML = `<td>${e.seq}</td><td class="mono">${esc(e.timestamp)}</td><td>${esc(e.eventType)}</td><td>${esc(e.actorId)}</td>
+                    <td>${esc(e.resourceType)}/${esc(e.resourceId)}</td><td>${state}</td>
+                    <td>${e.archived || e.eventType.startsWith("SYSTEM_") ? "" : `<button data-a="redact">Redact</button>`}</td>`;
+    tr.onclick = () => showDetail(e.eventId);
+    const redactBtn = tr.querySelector('[data-a="redact"]');
+    if (redactBtn) redactBtn.onclick = async (ev) => {
+      ev.stopPropagation();
+      await showDetail(e.eventId);
+      $("d-paths").focus();
+    };
+    tbody.appendChild(tr);
+  }
+  shownCount += page.items.length;
+  nextCursor = page.nextCursor;
+  $("b-next").disabled = !nextCursor;
+  $("b-table").classList.toggle("hidden", shownCount === 0);
+  $("b-count").textContent = `${shownCount} shown${nextCursor ? ", more available" : ""}`;
+  $("b-out").innerHTML = shownCount === 0 ? `<div class="msg warn">No events match.</div>` : "";
+}
+$("b-search").onclick = () => run($("b-search"), $("b-out"), () => loadPage(false));
+$("b-next").onclick = () => run($("b-next"), $("b-out"), () => loadPage(true));
+
+let detailId = null;
+async function showDetail(id) {
+  detailId = id;
+  $("detail").classList.remove("hidden");
+  $("d-id").textContent = id; $("d-out").innerHTML = ""; $("d-json").textContent = "Loading…";
+  try {
+    const e = await api("auditor", "GET", `/audit/events/${encodeURIComponent(id)}`);
+    $("d-json").textContent = JSON.stringify(e, null, 2);
+  } catch (err) { $("d-json").textContent = ""; showError($("d-out"), err); }
+  $("detail").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+$("d-redact").onclick = () => run($("d-redact"), $("d-out"), async () => {
+  const paths = $("d-paths").value.split("\n").map((l) => l.trim()).filter(Boolean)
+    .map((l) => l.split(".").map((s) => (/^\d+$/.test(s) ? Number(s) : s)));
+  const r = await api("admin", "POST", `/audit/events/${encodeURIComponent(detailId)}/redactions`,
+                      { body: { paths, reason: $("d-reason").value } });
+  await showDetail(detailId);
+  showOk($("d-out"), `Redacted ${r.redactedPaths.length} path(s)` +
+    (r.alreadyRedactedPaths.length ? `, ${r.alreadyRedactedPaths.length} already redacted` : "") +
+    (r.redactionSeq ? ` · authorized by signed event seq <b>${r.redactionSeq}</b>` : ""));
+});
+
+// --- Verify -----------------------------------------------------------------
+function renderVerify(r, label) {
+  const fi = r.firstInconsistency;
+  const a = r.anchor;
+  const anchor = !a ? "" : a.matched === null
+    ? `<div class="msg warn">Anchor seq ${a.seq}: not checked, because verification stopped at an earlier record.</div>`
+    : `<div class="msg ${a.matched ? "ok" : "bad"}">Anchor seq ${a.seq}: ${a.matched ? "matches" : "DOES NOT match"} the stored chain.</div>`;
+  $("v-out").innerHTML = `
+    <div style="margin-top:14px"><span class="big-status ${statusClass(r.status)}">${esc(r.status)}</span>
+      <span class="hint" style="margin-left:8px">${esc(label)}</span></div>
+    <div class="stats">
+      <div class="stat"><b>${r.recordsChecked}</b><span>records checked</span></div>
+      <div class="stat"><b>${r.headSeq}</b><span>${fi ? "checked up to seq" : "head seq"}</span></div>
+      <div class="stat"><b>${r.authorized.redactedLeaves}</b><span>authorized redactions</span></div>
+      <div class="stat"><b>${r.authorized.archivedRecords}</b><span>authorized archived</span></div>
+    </div>
+    ${fi ? `<div class="msg bad"><b>First inconsistency at seq ${fi.seq}: ${esc(fi.violationType)}</b>${fi.field ? `<br>field: ${esc(fi.field)}` : ""}${fi.leafPath ? `<br>leaf: ${esc(JSON.stringify(fi.leafPath))}` : ""}</div>` : ""}
+    ${anchor}
+    ${r.notes.length ? `<div class="msg warn">${r.notes.map(esc).join("<br>")}</div>` : ""}
+    <details style="margin-top:10px"><summary class="hint" style="cursor:pointer">Raw response</summary><pre>${esc(JSON.stringify(r, null, 2))}</pre></details>`;
+}
+$("v-run").onclick = () => run($("v-run"), $("v-out"), async () => {
+  renderVerify(await api("auditor", "GET", "/audit/verify"), "full chain walk");
+});
+
+function checkpoints() { return store.get("aip-checkpoints", []); }
+function renderCheckpoints() {
+  const list = checkpoints();
+  $("cp-empty").classList.toggle("hidden", list.length > 0);
+  $("cp-table").classList.toggle("hidden", list.length === 0);
+  const tbody = $("cp-table").querySelector("tbody");
+  tbody.innerHTML = "";
+  list.forEach((c, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${c.seq}</td><td class="mono" title="${esc(c.recordHash)}">${esc(short(c.recordHash))}</td>
+      <td class="mono">${esc(c.signedAt)}</td><td class="mono">${esc(c.keyId)}</td>
+      <td style="white-space:nowrap"><button data-a="verify">Verify against</button> <button data-a="del">Remove</button></td>`;
+    tr.querySelector('[data-a="verify"]').onclick = (ev) => run(ev.target, $("v-out"), async () => {
+      renderVerify(await api("auditor", "GET", "/audit/verify", { query: { anchorSeq: c.seq, anchorHash: c.recordHash } }),
+                   `against checkpoint seq ${c.seq}`);
+      $("v-out").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+    tr.querySelector('[data-a="del"]').onclick = () => { const l = checkpoints(); l.splice(i, 1); store.set("aip-checkpoints", l); renderCheckpoints(); };
+    tbody.appendChild(tr);
+  });
+}
+$("v-checkpoint").onclick = () => run($("v-checkpoint"), $("v-out"), async () => {
+  const c = await api("auditor", "GET", "/audit/checkpoints/latest");
+  store.set("aip-checkpoints", [c, ...checkpoints()].slice(0, 20));
+  renderCheckpoints();
+  showOk($("v-out"), `Signed checkpoint at seq <b>${c.seq}</b> (key ${esc(c.keyId)}). Saved below.`);
+});
+renderCheckpoints();
+
+// --- Report -----------------------------------------------------------------
+$("r-run").onclick = () => run($("r-run"), $("r-out"), async () => {
+  if (!$("r-acct").value.trim() && !$("r-actor").value.trim())
+    throw new ApiError(0, { title: "Account ID or actor ID required", detail: "The report is scoped to an account, an actor, or both." });
+  const r =await api("auditor", "GET", "/audit/reports/account-access", { query: {
+    accountId: $("r-acct").value.trim(), actorId: $("r-actor").value.trim(), eventType: $("r-type").value.trim(),
+    from: $("r-from").value.trim(), to: $("r-to").value.trim() } });
+  const s = r.summary;
+  const counts = (o) => Object.entries(o).map(([k, v]) => `${esc(k)}: <b>${v}</b>`).join(" · ") || "none";
+  $("r-out").innerHTML = `
+    <div style="margin-top:14px">Integrity ${badge(r.integrity.status)} <span class="hint">${r.integrity.recordsChecked} records checked</span></div>
+    <div class="stats">
+      <div class="stat"><b>${s.totalEvents}</b><span>events</span></div>
+      <div class="stat"><b>${s.accounts.length}</b><span>accounts</span></div>
+      <div class="stat"><b>${Object.keys(s.byActor).length}</b><span>actors</span></div>
+      <div class="stat"><b>${s.eventsNotVerified}</b><span>not verified</span></div>
+    </div>
+    <p class="hint" style="margin-top:10px">By actor: ${counts(s.byActor)}<br>By type: ${counts(s.byEventType)}</p>
+    ${r.events.length ? `<div class="table-wrap"><table><thead><tr><th>Seq</th><th>Timestamp</th><th>Actor</th><th>Account</th><th>Type</th><th>Integrity</th></tr></thead><tbody>
+      ${r.events.map((e) => `<tr><td>${e.seq}</td><td class="mono">${esc(e.timestamp)}</td><td>${esc(e.actorId)}</td><td>${esc(e.accountId)}</td><td>${esc(e.eventType)}</td><td>${badge(e.integrity)}</td></tr>`).join("")}
+    </tbody></table></div>` : `<div class="msg warn">No account-access events match.</div>`}`;
+});
+
+// --- Export -----------------------------------------------------------------
+let exportUrl = null;
+$("e-run").onclick = () => run($("e-run"), $("e-out"), async () => {
+  const by = $("e-by").value, val = $("e-val").value.trim();
+  const bundle = await api("auditor", "GET", "/audit/export", { query: { [by]: val } });
+  const text = JSON.stringify(bundle, null, 2);
+  if (exportUrl) URL.revokeObjectURL(exportUrl);
+  exportUrl = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  const name = `bundle-${val.replace(/[^\w.-]/g, "_")}.json`;
+  const n = Array.isArray(bundle.records) ? bundle.records.length : null;
+  $("e-out").innerHTML = `<div class="msg ok">Bundle ready${n !== null ? ` · ${n} record(s)` : ""}. <a download="${esc(name)}" href="${exportUrl}" style="color:inherit"><b>Download ${esc(name)}</b></a></div>
+    <p class="hint" style="margin-top:8px">Verify offline (put the file in <code>exports/</code>):<br><code>.\\.venv\\Scripts\\python.exe tools\\verify_bundle.py exports\\${esc(name)} --trusted-key &lt;public key hex from keys/api-keys.txt&gt;</code></p>
+    <details><summary class="hint" style="cursor:pointer">Bundle JSON</summary><pre>${esc(text)}</pre></details>`;
+});
+
+// --- Retention --------------------------------------------------------------
+$("t-run").onclick = () => run($("t-run"), $("t-out"), async () => {
+  const r = await api("admin", "POST", "/audit/retention/runs", { body: { dryRun: $("t-dry").checked } });
+  $("t-out").innerHTML = `<div class="msg ${r.recordCount ? "warn" : "ok"}">${r.dryRun ? "Dry run: would archive" : "Archived"} <b>${r.recordCount}</b> record(s)
+    older than ${esc(r.cutoff)} (window ${r.windowDays} days)${r.fromSeq ? `, seq ${r.fromSeq}–${r.toSeq}` : ""}.</div>
+    <pre>${esc(JSON.stringify(r, null, 2))}</pre>`;
+});
+</script>
+</body>
+</html>
