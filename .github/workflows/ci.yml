@@ -1,0 +1,67 @@
+# Quality gates from README.md "Tests and tamper demonstration", on Linux.
+# Installing the dev lock here also checks its Linux hash coverage (docs/DEVELOPMENT.md).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, types and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      - name: Install locked dev dependencies
+        run: python -m pip install --require-hashes -r requirements-dev.lock
+
+      - name: Ruff lint
+        run: python -m ruff check .
+
+      - name: Ruff format
+        run: python -m ruff format --check .
+
+      - name: Mypy (strict)
+        run: python -m mypy
+
+      - name: Pytest with branch coverage
+        run: python -m pytest -W error --cov=aip --cov-branch
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t audit-integrity-platform .
+
+      - name: Start container and check the API answers
+        run: |
+          docker run -d --name aip -p 127.0.0.1:8000:8000 audit-integrity-platform
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8000/openapi.json > /dev/null && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8000/openapi.json > /dev/null
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/audit/events)" = 401
+
+      - name: Container logs
+        if: always()
+        run: docker logs aip || true
