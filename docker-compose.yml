@@ -1,0 +1,55 @@
+# Local stack: API (8000), test UI (8080) and, with --profile dbadmin, a SQLite browser (8082).
+# Start it with scripts/start.ps1 (Windows) or scripts/start.sh (macOS/Linux): they create
+# keys/aip.env and the signing key on first run, then run `docker compose up`.
+# Every port is bound to 127.0.0.1 only. There is no TLS: do not expose these ports.
+name: aip
+
+services:
+  aip:
+    build: .
+    image: audit-integrity-platform
+    container_name: aip
+    restart: unless-stopped
+    env_file: keys/aip.env   # AIP_API_KEYS (role:sha256 entries) and AIP_SIGNING_KEY_PATH
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - aip-data:/app/data
+      - aip-archives:/app/archives
+      - aip-keys:/app/keys
+
+  ui:
+    image: nginx:1.27-alpine
+    container_name: aip-ui
+    restart: unless-stopped
+    depends_on:
+      aip:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:80"
+    volumes:
+      - ./ui/index.html:/usr/share/nginx/html/index.html:ro
+      - ./ui/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+  # Third-party web UI for the live SQLite file. Optional: scripts/start.ps1 -DbAdmin.
+  # Edits act on the real audit log; dropping a trigger breaks the API's startup schema check.
+  dbadmin:
+    profiles: [dbadmin]
+    image: coleifer/sqlite-web:latest
+    container_name: aip-sqlite-web
+    restart: unless-stopped
+    user: "10001"
+    environment:
+      SQLITE_DATABASE: audit.db
+    ports:
+      - "127.0.0.1:8082:8080"
+    volumes:
+      - aip-data:/data
+
+volumes:
+  aip-data:
+    name: aip-data
+  aip-archives:
+    name: aip-archives
+  aip-keys:
+    name: aip-keys

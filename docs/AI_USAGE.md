@@ -7,7 +7,7 @@ traceability record; commits do not carry AI co-author trailers.
 ## 1. Tools
 | Tool | Role | Period |
 |------|------|--------|
-| Claude Code (Anthropic), VS Code extension, model Claude Opus 5.5 | Repository work: inspection, planning and design documents, and in later milestones implementation and tests. Every file change, install and commit is approved by the candidate first. | 2026-10-28 onward |
+| Claude Code (Anthropic), VS Code extension and the Claude desktop app, model Claude Opus 5.5 | Repository work: inspection, planning and design documents, and in later milestones implementation and tests. Every file change, install and commit is approved by the candidate first. | 2026-10-28 onward |
 | OpenAI ChatGPT | Advisory: requirement interpretation, planning advice, prompt drafting and review of Claude Code's output. ChatGPT provided planning and review guidance; no repository implementation or testing is attributed to ChatGPT. | October 2026, including 2026-10-28 |
 
 ## 2. Contributions
@@ -45,6 +45,8 @@ traceability record; commits do not carry AI co-author trailers.
 - Commit 5: reviewed the committed design and PoC, found the JSON Pointer ambiguity in leaf
   commitments, proposed decisions U1–U9, implemented `src/aip/crypto/` and `tests/crypto/`, assembled
   hand-written known-answer preimages (digests computed by external tools), and ran the quality gates.
+- After submission (row 28): wrote the Dockerfile, Docker Compose stack, browser test UI, start and
+  check scripts and the GitHub Actions workflow, tested them, and updated the documentation.
 
 ### ChatGPT (as reported by the candidate)
 - Helped interpret and organize the assessment requirements.
@@ -102,6 +104,7 @@ candidate.
 | 25 | 2026-10-28 | Scenario C per-event integrity correction | Claude Code: found in the demo rehearsal and the review that the account-access report labelled redacted or archived events INDETERMINATE whenever the chain was not fully VERIFIED, even when their own evidence had verified before a later break. Proposed and then implemented an internal `VerifyReport.indeterminate_seqs` set, filled exactly where the unverified/unavailable counters are incremented, and classified each event from it; 10 regression tests, two of which fail on the previous mapping | Candidate reviewed the proposal and approved it as a local, uncommitted change, with the public API schemas and behaviour preserved and only directly affected documentation updated. Results: see DEVELOPMENT.md, Scenario C correction. Kept as uncommitted working-tree changes for the candidate's review, with no separate commit; the candidate decided to include rows 24–27 in one final commit, created only after approving the exact staged files and message (a commit cannot record its own hash) |
 | 26 | 2026-10-28 | Phase 2: engineering documentation and performance benchmark | Claude Code: inventoried the existing documents to avoid duplication; rewrote the ARCHITECTURE.md component diagram to match the actual calls, roles and trust boundaries; added a hash-chain flow diagram separating internal verification from externally anchored trust, an ingestion sequence diagram, an expanded threat model (assets, actors, boundaries, attack scenarios with implemented protections, residual risks and proposed controls) and a production matrix with a diagram labelled as proposed; wrote three ADRs marked as recorded retrospectively with the commits where each decision was made; wrote RUNBOOK.md using the actual response fields, error codes and CLI; wrote `scripts/benchmark.py` and a smoke test, ran it at 1,000 and 10,000 records, and recorded the measured output in PERFORMANCE.md | Candidate approved the scope with constraints: one final commit after all work and review; no product-code changes; no downloads without approval (so the Mermaid diagrams were checked structurally, not rendered); no invented results or commands; in-process timings not to be described as network latency; unimplemented capabilities labelled. Results: see DEVELOPMENT.md, Phase 2. Kept as uncommitted working-tree changes for the candidate's review, with no separate commit; the candidate decided to include rows 24–27 in one final commit, created only after approving the exact staged files and message (a commit cannot record its own hash) |
 | 27 | 2026-10-29 | Final pre-submission validation and documentation cleanup | Claude Code: read-only validation: diff and secret review; Mermaid structural check; a clean-room install from the README in a disposable clone; live checks against plain uvicorn (OpenAPI scheme and request bodies, roles, append, verify, export verified offline with a separately supplied public key, Scenario C per-event statuses); and all quality gates. Then documentation-only corrections: a stale attestation statement and the commit count in FINAL_SUMMARY.md, the status wording of rows 24–26, the SCENARIO_C.md test inventory, the measurement scope and output location in PERFORMANCE.md, and the ARCHITECTURE.md diagram wording and error branches | Candidate approved documentation-only corrections, with no downloads, no Git operations and the 669-test baseline kept. Results: see DEVELOPMENT.md, final validation. Same status as rows 24–26 |
+| 28 | 2026-10-29 | After submission: Docker packaging, test UI, CI and start scripts | Claude Code (desktop app): wrote `Dockerfile`, `.dockerignore`, `docker-compose.yml`, `ui/` (a static page and an nginx proxy config), `scripts/start.ps1`/`start.sh`, `scripts/check.ps1`/`check.sh`/`checks.sh` and `.github/workflows/ci.yml`; updated README, DEVELOPMENT, TESTING, FINAL_SUMMARY, ARCHITECTURE, LIMITATIONS and RUNBOOK. Exercised every UI flow against a throwaway container with temporary keys, including a direct SQLite edit, and ran the quality gates in `python:3.14-slim`. No product code or dependency changes | Candidate requested each step (Docker image, UI, database browser, CI, one-command setup with Docker Desktop as the only manual install, Docker-first README), approved the third-party `coleifer/sqlite-web` image explicitly, and asked for commits under the candidate's own name with no AI co-author. Results: DEVELOPMENT.md, "Docker, test UI, start scripts and CI" |
 
 ChatGPT reviews of Claude Code's plans took place between these sessions (October 2026, including
 2026-10-28). The candidate reports that these reviews contributed to identifying several of the concerns
@@ -245,6 +248,15 @@ behind the refinements, corrections and adjustments in rows 4–6.
   verification. The append sequence diagram drew its error branches as `alt` blocks with no
   alternative, so the success path appeared to continue after an error response; they are now
   `break` blocks. All were corrected in the documentation only.
+- Row 28: testing the test UI found three of its own defects. Validation errors showed only their
+  title, because the UI read `errors` while the API returns `issues`. The unfiltered access report
+  failed with 422, because the API requires `accountId` or `actorId`, and the UI didn't say so.
+  On a tampered chain the UI labelled the last checked record as the head and worded the skipped
+  anchor check as a failure. All three were fixed in `ui/index.html`. The first version of
+  `scripts/start.ps1` recursed endlessly: its helper function was named `Docker`, and PowerShell
+  resolves function names case-insensitively before external commands. It then stopped on Docker's
+  progress output, which Windows PowerShell 5.1 turns into errors under
+  `$ErrorActionPreference = "Stop"`. Both were fixed before the script was committed.
 
 ## 7. Verification policy
 - Human review: the candidate approved every plan, every staged file set, every commit message and

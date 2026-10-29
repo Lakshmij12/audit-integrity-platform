@@ -249,3 +249,19 @@ here is claimed to be complete.
 76. **Per-event status after a break is coarse.** Verification stops at the first violation, so later
     events are UNVERIFIED rather than individually classified. Each report walks the whole chain
     (item 57), and a report holds at most 10,000 events.
+
+## Docker stack and test UI (added after submission)
+77. **Local evaluation only.** The Compose stack serves plain HTTP. Every port is bound to 127.0.0.1;
+    publishing them would expose static API keys and plaintext payloads without TLS.
+78. **Keys on disk in plain text.** The start scripts write the three API keys and the signing public
+    key to `keys/api-keys.txt`; the signing private key is an unencrypted file in the `aip-keys`
+    volume (items 9 and 54). Anyone with access to the Docker host can read both.
+79. **The test UI stores secrets in the browser.** API keys and signed checkpoints are kept in the
+    page's `localStorage` for http://127.0.0.1:8080. Checkpoints kept there are not an independent
+    anchor: anyone with access to that browser profile can change them.
+80. **The SQLite browser can edit the live log.** `coleifer/sqlite-web` (optional, `-DbAdmin`) has no
+    login and full write access to the database. It is a third-party image, pulled by the `latest`
+    tag. Dropping a trigger there makes the API refuse to start (`unexpected schema`) until the data
+    is reset (RUNBOOK §8).
+81. **Images are pinned by tag, not digest.** `python:3.14-slim` and `nginx:1.27-alpine` can change
+    under the same tag; the Python dependencies themselves are hash-checked.

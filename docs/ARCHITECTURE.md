@@ -303,7 +303,7 @@ production; each row answers a documented limitation.
 | Reliability | No idempotency keys; manual recovery (RUNBOOK.md) | Idempotency keys; automated orphan-archive cleanup |
 | Observability | JSON access log | Metrics and alerts on verification failures, key usage, latency and archive availability |
 | Backup and disaster recovery | None built in | Scheduled backups, restore drills checked against external checkpoints |
-| Delivery | Local quality gates only, Windows tested | CI/CD on Linux and Windows: tests, Ruff, mypy, pip-audit, SBOM |
+| Delivery | GitHub Actions CI on Ubuntu (tests, Ruff, mypy, Docker image build and smoke check); a local Docker Compose stack with a test UI; Windows tested locally | CI/CD on Linux and Windows: tests, Ruff, mypy, pip-audit, SBOM, signed images and automated deployment |
 
 ```mermaid
 flowchart LR

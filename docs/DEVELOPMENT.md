@@ -11,11 +11,17 @@ Verified on 2026-10-28 (Windows 10, CPython 3.14.3, pip 25.3): both locks resolv
 mode, `requirements-dev.lock` installs with `--require-hashes`, `pip check` reports no broken
 requirements, and the seven runtime/tooling smoke tests pass with warnings treated as errors (see
 "Quality gate results"). That check covered the toolchain only (commit 4); later commits record their
-own results below. Linux installation is **unverified** (see "Platform limitations").
+own results below.
+
+Linux, verified on 2026-10-29: both locks install with `--require-hashes` on Debian (`python:3.14-slim`,
+CPython 3.14.10). The runtime lock is installed by the Docker image build and the dev lock by
+`scripts/check.ps1` and by GitHub Actions on Ubuntu (see "Docker, test UI and CI" and "Platform
+limitations").
 
 ## Prerequisites
-- CPython 3.14
-- Git
+- Docker Desktop, for the containerised stack and for running the checks without a local Python
+  (README "Quick start with Docker"). Nothing else needs to be installed for that path.
+- For the local Python setup below: CPython 3.14 and Git.
 
 ## Bootstrap tools vs hash-locked dependencies
 | Category | Packages | How installed | Hash-verified |
@@ -83,8 +89,9 @@ The locks were generated on Windows 10 with CPython 3.14.3.
    includes it unnecessarily (pure Python; expected to be harmless). Any Linux-only transitive
    dependency would be missing from the locks; none is known in this set, but this is unverified.
 2. Compiled packages carry hashes for many published files (e.g. pydantic-core 137, cffi 100,
-   sqlalchemy 72, cryptography 59), which suggests that Linux wheels are covered. **Linux installation
-   and hash coverage are unverified** until CI installs the locks on Linux.
+   sqlalchemy 72, cryptography 59). On 2026-10-29 both locks installed with `--require-hashes` on
+   Debian with CPython 3.14.10 (Docker image build, `scripts/check.ps1`), and the dev lock installs on
+   GitHub Actions' Ubuntu runner, so the Linux wheels in this set are covered. macOS remains untested.
 
 ## Smoke tests
 `tests/test_smoke.py` contains runtime and tooling checks only: interpreter version, imports, Ed25519,
@@ -214,6 +221,28 @@ Invoke-RestMethod -Headers $h -Uri "http://127.0.0.1:8000/audit/reports/account-
 ```
 Events must use `resourceType` `CLIENT_ACCOUNT` (or the value of `AIP_ACCOUNT_RESOURCE_TYPE`). See
 docs/SCENARIO_C.md.
+
+## Docker, test UI and CI (added 2026-10-29, after submission)
+No product code changed: these files package and exercise the existing service.
+
+| File | Purpose |
+|------|---------|
+| `Dockerfile` | `python:3.14-slim`; `pip install --require-hashes --no-deps -r requirements.lock` (runtime lock only); `src/` and `tools/` copied, `PYTHONPATH=/app/src`; non-root user (uid 10001); volumes `/app/data`, `/app/archives`, `/app/keys`; healthcheck on `/openapi.json` (the service has no health endpoint and that document needs no key); `uvicorn --factory` on port 8000 |
+| `.dockerignore` | Keeps `.git`, `.venv`, `keys/`, `data/`, `archives/`, `exports/`, `*.pem`, databases and bundles out of the build context |
+| `docker-compose.yml` | Project `aip`: `aip` (API, 8000), `ui` (nginx, 8080), and `dbadmin` (sqlite-web, 8082) under the `dbadmin` profile. Named volumes `aip-data`, `aip-archives`, `aip-keys`; `env_file: keys/aip.env`; every port bound to 127.0.0.1 |
+| `ui/index.html`, `ui/nginx.conf` | Single static page (no build step, no external scripts) over the API. nginx serves it and proxies `/audit`, `/docs` and `/openapi.json` to `aip:8000`, so the browser stays on one origin and the API needs no CORS |
+| `scripts/start.ps1`, `scripts/start.sh` | Check Docker (and start Docker Desktop on Windows), build the image, create API keys and the signing key on first run, run `docker compose up -d`, wait for health. Options: `-DbAdmin`, `-Reset`, `-Stop`, `-ShowKeys` (`--dbadmin`, ... in the shell version) |
+| `scripts/check.ps1`, `scripts/check.sh`, `scripts/checks.sh` | Run `checks.sh` in `python:3.14-slim` with the checkout mounted read-only: hash-checked dev-lock install, Ruff, mypy, pytest with branch coverage, and the tamper demo, on a copy of the tree |
+| `.github/workflows/ci.yml` | GitHub Actions on push and pull request to `main`: job `checks` (dev lock, Ruff, mypy, pytest on `ubuntu-latest`, Python from `.python-version`) and job `docker` (build, start, `/openapi.json` 200 and unauthenticated `/audit/events` 401) |
+
+Key files written by the start scripts, all under the git-ignored `keys/`: `api-keys.txt` (the three
+API keys and the signing public key, in plain text) and `aip.env` (`AIP_API_KEYS` with SHA-256
+entries and `AIP_SIGNING_KEY_PATH=keys/signing.pem`, written without a byte-order mark so Compose reads
+the first variable correctly). The signing key itself is created inside the `aip-keys` volume with
+`docker compose run --rm --no-deps aip python -m aip.cli new-signing-key`.
+
+The tamper demo is not in the runtime image: it uses FastAPI's test client, which needs the dev-only
+`httpx2`. `scripts/check.ps1` runs it in the dev container instead.
 
 ## Quality gates
 ```powershell
@@ -380,5 +409,21 @@ Final validation and documentation cleanup (documentation only; no code, test or
 | After the cleanup: `pytest -W error --cov=aip --cov-branch` | 0 | `669 passed`; 96% overall |
 | After the cleanup: `ruff check .`, `ruff format --check .`, `mypy`, `scripts/tamper_demo.py` | 0 | `All checks passed!`; `95 files already formatted`; `no issues found in 77 source files`; `all steps behaved as expected` |
 | Documentation checks | — | Mermaid structural check (now also covering `break` blocks): no problems; every relative Markdown link in README, ATTESTATION and docs/ resolves |
+
+Docker, test UI, start scripts and CI (2026-10-29; Windows 11 host, Docker Desktop, checks in
+`python:3.14-slim` with CPython 3.14.10; no product-code or dependency changes):
+
+| Gate | Exit code | Output |
+|------|-----------|--------|
+| `docker build` (runtime lock, `--require-hashes`) | 0 | Image built; `pip install` from `requirements.lock` succeeded on Linux |
+| `scripts/check.ps1`: dev-lock install with `--require-hashes` | 0 | Installed on Linux |
+| `scripts/check.ps1`: `ruff check .`, `ruff format --check .`, `mypy` | 0 | `All checks passed!`; `95 files already formatted`; `Success: no issues found in 77 source files` |
+| `scripts/check.ps1`: `pytest -W error --cov=aip --cov-branch` | 0 | `669 passed`; 96% overall |
+| `scripts/check.ps1`: `scripts/tamper_demo.py` | 0 | `RESULT: all steps behaved as expected` |
+| `scripts/start.ps1`, first run (no `keys/`) | 0 | Three keys and `aip.env` written (no BOM); a generated auditor key returned 200 on `/audit/verify` through the UI proxy |
+| `scripts/start.ps1` over an existing manual setup, then `-Stop` and start again | 0 | Manually created containers replaced by Compose ones; existing keys reused; 13 records kept |
+| `scripts/start.sh --dbadmin` (Git Bash) | 0 | Stack running; `sh -n` clean for all three shell scripts |
+| Container smoke checks | — | `/openapi.json` 200 and `/audit/events` 401 with no keys configured (the CI `docker` job's check); `tools/verify_bundle.py` runs inside the image |
+| Test UI against a throwaway API with temporary keys | — | Append, sample load, invalid JSON and 422 issues, paging and filters, redaction (2 paths, signed event, already-redacted, unknown path), verify, checkpoint and anchored verify, report by account and actor, export (download and bundle sections), retention dry and real run; after a direct SQLite edit: TAMPERED with `LEAF_COMMITMENT_MISMATCH`, report per-event TAMPERED/UNVERIFIED, checkpoint refused with 409 |
 
 `poc/` is excluded from Ruff: it holds the redaction spike exactly as run and recorded in commit 3.

@@ -15,6 +15,12 @@
 - **Warnings are errors** (`filterwarnings = ["error"]`).
 
 ## 2. Commands
+With only Docker installed (runs everything below in a `python:3.14-slim` container, on a read-only
+copy of the checkout):
+```powershell
+.\scripts\check.ps1        # macOS/Linux: sh scripts/check.sh
+```
+With a local virtual environment:
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -W error --cov=aip --cov-branch --cov-report=term-missing
 .\.venv\Scripts\python.exe -m pytest tests/export          # independent verifier (subprocess)
@@ -51,8 +57,30 @@ are outside the coverage source and are exercised by subprocess tests.
 | Rewrite and recompute every later hash; delete the tail | VERIFIED without an anchor (documented L1 limit); `ANCHOR_MISMATCH` / `TRUNCATED` with one |
 | Same changes, then `GET /audit/checkpoints/latest` or `/audit/export` | 409: never signs a chain that fails verification |
 
-## 5. Known untested cases
-- **Linux and macOS.** Only Windows 10 with CPython 3.14.3 was run.
+## 5. Continuous integration
+`.github/workflows/ci.yml` runs on every push and pull request to `main`:
+- **`checks`** on `ubuntu-latest` with the Python version from `.python-version`: hash-checked
+  install of `requirements-dev.lock`, `ruff check .`, `ruff format --check .`, `mypy`, and
+  `pytest -W error --cov=aip --cov-branch`.
+- **`docker`**: builds the image, starts it with no keys configured, and checks that
+  `/openapi.json` returns 200 and `/audit/events` returns 401.
+
+`pip-audit` is not in CI: its result depends on the advisory database on the day it runs, so it stays
+a manual gate (DEVELOPMENT.md "Quality gates").
+
+## 6. Manual testing with the browser UI
+`scripts/start.ps1` starts the API with a test UI at http://127.0.0.1:8080 (README "Test it in the
+UI"). It is a manual aid, not part of the automated suite. On 2026-10-29 every UI flow was exercised
+against a throwaway container with temporary keys: append and sample load, client-side and server
+validation errors, paging and filters, redaction (including already-redacted and unknown paths),
+verify, checkpoints and anchored verify, the account-access report, export and retention. After a
+direct SQLite edit the UI showed TAMPERED with `LEAF_COMMITMENT_MISMATCH`, the report marked the event
+TAMPERED and later ones UNVERIFIED, and signing a checkpoint was refused with 409. Results are in
+DEVELOPMENT.md.
+
+## 7. Known untested cases
+- **macOS.** Windows 10 and 11 were run locally, and Linux (Debian in Docker, Ubuntu in CI); macOS
+  was not.
 - **Real crash or power loss** during archive writes or COMMIT. Failure paths are simulated by injecting
   exceptions, and the missing directory fsync is documented (LIMITATIONS 61).
 - **Load and concurrency performance.** `scripts/benchmark.py` measures single-threaded throughput and
@@ -61,6 +89,8 @@ are outside the coverage source and are exercised by subprocess tests.
 - **Some defensive branches:** the 10,000-record export and report limits, skipping malformed system
   events during export, and some branches that are unreachable after earlier validation (listed in the
   coverage report).
-- **TLS, a reverse proxy and multi-instance deployment** (out of scope).
+- **TLS, a reverse proxy and multi-instance deployment** (out of scope). The nginx container in the
+  Docker stack is a plain-HTTP proxy for the test UI only.
+- **The test UI and start scripts** have no automated tests; they were checked by hand (section 6).
 - **The verifier against bundles from other implementations.** It shares the specification, not code,
   with the service; it was tested only on bundles this service produced.

@@ -18,6 +18,11 @@ with the fixes from the pre-submission review and the engineering documentation 
 PERFORMANCE; AI_USAGE §4, rows 24–27). The same rule applies to it: the candidate approves the exact
 staged files and commit message first (AI_USAGE §7).
 
+After submission, the candidate added packaging for evaluation, without changing product code: a
+Dockerfile and Docker Compose stack, a browser test UI, one-command start and check scripts, and
+GitHub Actions CI (README "Quick start with Docker"; DEVELOPMENT.md "Docker, test UI and CI";
+AI_USAGE §4, row 28).
+
 ## 2. Requirement-to-implementation mapping
 | Assignment requirement | Implementation | Evidence |
 |------------------------|----------------|----------|
@@ -46,7 +51,8 @@ independent offline verifier; the Scenario C account-access report; and the repr
 demonstration.
 
 ## 4. Deliberate scope reductions
-- **Single-node SQLite;** no cloud deployment, container setup or metrics.
+- **Single-node SQLite;** no cloud deployment or metrics. The Docker Compose stack is for local
+  evaluation only (plain HTTP on localhost).
 - **Checkpoints are not stored in the database.** The caller keeps them and passes them in as an
   anchor; there's no external publication or Merkle proofs.
 - **One service signing key,** with no rotation, list of trusted keys or HSM.
@@ -72,14 +78,19 @@ The three central decisions have architecture decision records with alternatives
 | Keyset pagination | Stable under concurrent appends | No random page access |
 
 ## 6. Reproducible demonstration
-1. Set up: README "Prerequisites and installation" and "Keys and server".
-2. Run `scripts/tamper_demo.py`. It writes and queries events, verifies them, edits SQLite directly, and
-   shows the change detected. It also shows truncation detected against a signed checkpoint.
-3. Run the README example requests: ingest, query, verify, checkpoint, redact, retention, export, and
+1. Set up: with Docker Desktop, run `.\scripts\start.ps1` (README "Quick start with Docker"); or
+   follow README "Local Python setup".
+2. In the test UI at http://127.0.0.1:8080, follow README "Test it in the UI": sample events, browse,
+   redact, verify, checkpoint, report, export and retention, then the tamper step.
+3. Run `scripts/tamper_demo.py` (included in `.\scripts\check.ps1`). It writes and queries events,
+   verifies them, edits SQLite directly, and shows the change detected. It also shows truncation
+   detected against a signed checkpoint.
+4. Run the README example requests: ingest, query, verify, checkpoint, redact, retention, export, and
    the account-access report.
-4. Run `tools/verify_bundle.py exports\bundle.json --trusted-key <hex>`. Then edit the bundle and run
-   it again; the result is `FAILED` with a specific code.
-5. Run `python -m pytest -W error --cov=aip --cov-branch`: 669 tests pass with 96% branch coverage.
+5. Run `tools/verify_bundle.py` on an exported bundle with `--trusted-key <hex>`. Then edit the bundle
+   and run it again; the result is `FAILED` with a specific code.
+6. Run `.\scripts\check.ps1` (or `python -m pytest -W error --cov=aip --cov-branch`): 669 tests pass
+   with 96% branch coverage. GitHub Actions runs the same checks on Ubuntu for every push.
 
 ## 7. What remains for production readiness
 ARCHITECTURE.md §7 has a current-versus-proposed matrix and a diagram of the proposed design (not

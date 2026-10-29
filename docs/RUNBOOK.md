@@ -181,3 +181,38 @@ hold plaintext payloads and keep values redacted later (LIMITATIONS 2, 59).
    (redaction does not reach backups). Re-run the redaction requests; each one appends a new signed
    `SYSTEM_REDACTION`.
 6. Take a new checkpoint (`GET $base/checkpoints/latest`) and store it outside the service.
+
+## 8. The Docker stack
+Started with `scripts/start.ps1` (README "Quick start with Docker"). Where things are:
+
+| Item | Location |
+|------|----------|
+| Database (`audit.db`, `-wal`, `-shm`) | Volume `aip-data`, `/app/data` in container `aip` |
+| Archive files | Volume `aip-archives`, `/app/archives` |
+| Signing key | Volume `aip-keys`, `/app/keys/signing.pem` |
+| API keys and their hashes | `keys/api-keys.txt` and `keys/aip.env` on the host (git-ignored) |
+| Logs (JSON access log) | `docker logs aip` |
+
+**The API container keeps restarting and the log ends with
+`StorageIntegrityError: unexpected schema: missing [('trigger', ...)]`.** The database was edited
+outside the service: a guard trigger was dropped, usually through the SQLite browser (`-DbAdmin`).
+This is the fail-closed startup check from section 7, and it is the same incident as section 1, since
+rows may also have been changed. A running container only checks at startup, so this appears at the
+next restart, possibly long after the edit.
+1. Preserve the evidence before changing anything. Stop the stack and copy the volume:
+   ```powershell
+   .\scripts\start.ps1 -Stop
+   New-Item -ItemType Directory -Force backup | Out-Null
+   docker run --rm -v aip-data:/data:ro -v "${PWD}\backup:/backup" audit-integrity-platform tar czf /backup/aip-data.tgz -C /data .
+   ```
+2. To investigate, restore the copy into a separate environment, recreate the missing triggers there
+   (definitions in `src/aip/storage/schema.py`) so the service starts, and run `GET /audit/verify`
+   and anchored verification against the checkpoints you hold (section 1).
+3. For a test stack, start again with an empty database: `.\scripts\start.ps1 -Reset`. This deletes
+   the `aip-data` and `aip-archives` volumes; keys are kept.
+
+Recreating the triggers on the live volume only hides the incident: the service starts, but any
+changed rows still verify as TAMPERED, and the edit itself leaves no record.
+
+**Checkpoints in the test UI no longer match after a reset.** They are stored in the browser and refer
+to the deleted chain; verifying against them reports a mismatch. Remove them in the Verify tab.

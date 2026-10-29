@@ -454,7 +454,9 @@ $("e-run").onclick = () => run($("e-run"), $("e-out"), async () => {
   const name = `bundle-${val.replace(/[^\w.-]/g, "_")}.json`;
   const n = Array.isArray(bundle.records) ? bundle.records.length : null;
   $("e-out").innerHTML = `<div class="msg ok">Bundle ready${n !== null ? ` · ${n} record(s)` : ""}. <a download="${esc(name)}" href="${exportUrl}" style="color:inherit"><b>Download ${esc(name)}</b></a></div>
-    <p class="hint" style="margin-top:8px">Verify offline (put the file in <code>exports/</code>):<br><code>.\\.venv\\Scripts\\python.exe tools\\verify_bundle.py exports\\${esc(name)} --trusted-key &lt;public key hex from keys/api-keys.txt&gt;</code></p>
+    <p class="hint" style="margin-top:8px">Verify offline with the signing public key from <code>keys/api-keys.txt</code> (put the file in <code>exports/</code>):<br>
+      <code>docker cp exports\\${esc(name)} aip:/tmp/bundle.json</code><br>
+      <code>docker exec aip python tools/verify_bundle.py /tmp/bundle.json --trusted-key &lt;public key hex&gt;</code></p>
     <details><summary class="hint" style="cursor:pointer">Bundle JSON</summary><pre>${esc(text)}</pre></details>`;
 });
 
